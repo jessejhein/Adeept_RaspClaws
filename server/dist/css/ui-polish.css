@@ -1,0 +1,89 @@
+html {
+  background: #1f2f35;
+}
+
+body {
+  color: #263238;
+}
+
+.appBar {
+  animation: none !important;
+  box-shadow: 0 2px 14px rgba(9, 20, 24, 0.28) !important;
+  background: #263238 !important;
+}
+
+.area-bg[data-v-2f84eec2] {
+  background-color: #223238;
+  background-size: cover;
+}
+
+.area-wrapper[data-v-2f84eec2] {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.mod-sheet[data-v-9a8a4ade] {
+  border-radius: 6px !important;
+  box-shadow: 0 8px 24px rgba(7, 16, 19, 0.24) !important;
+  overflow: hidden;
+}
+
+.mod-sheet .mod-title[data-v-9a8a4ade] {
+  padding: 0.42rem 0.85rem 0.32rem !important;
+  background: #f8fafb !important;
+  color: #263238;
+  font-size: 0.78rem;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+}
+
+.mod-sheet .mod-wrapper[data-v-9a8a4ade] {
+  background-color: #dde5e8 !important;
+  padding: 0.55rem 0.85rem 0.75rem !important;
+}
+
+.vedio-wrapper[data-v-7dc380d9],
+.fake-vedio-wrapper[data-v-2f84eec2],
+.radar-wrapper[data-v-c2c10634] {
+  border-radius: 6px !important;
+  background: #11191c;
+}
+
+.vedio-wrapper .canvas[data-v-7dc380d9],
+.vedio-wrapper .mjpeg-stream {
+  display: block;
+  width: 100%;
+}
+
+.buttons.v-btn {
+  border-radius: 5px !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22) !important;
+  font-weight: 700;
+}
+
+.button-child[data-v-55117156] {
+  gap: 0.35rem 0;
+}
+
+.status-wrapper .chips[data-v-39e02332] {
+  border-radius: 5px !important;
+  box-shadow: none !important;
+  min-height: 30px;
+}
+
+.wrapper .pwm-inputer[data-v-fa85e006] {
+  min-width: 4.5rem;
+}
+
+.v-input__slider .v-label {
+  color: #263238 !important;
+  font-weight: 700;
+}
+
+.expansion[data-v-5459b03e] {
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.reconnect-tip {
+  font-weight: 700;
+}
