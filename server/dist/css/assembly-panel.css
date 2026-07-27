@@ -176,6 +176,55 @@
   gap: 3px;
 }
 
+.led-bright {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.led-bright .led-slider {
+  flex: 1;
+  min-width: 0;
+}
+
+.led-br-val {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, monospace;
+  min-width: 2.4em;
+  text-align: right;
+  color: #c5d0e0;
+}
+
+.assembly-pattern-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.assembly-pattern-bar .pattern-label {
+  color: #8b95a5;
+  margin-right: 4px;
+}
+
+.assembly-pattern-bar .btn-pattern.active {
+  background: #1e88e5;
+  border-color: #42a5f5;
+}
+
+.assembly-led-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: #8b95a5;
+  line-height: 1.35;
+}
+
+.assembly-led-grid {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
 .assembly-status {
   padding: 6px 12px;
   border-top: 1px solid #2a3140;

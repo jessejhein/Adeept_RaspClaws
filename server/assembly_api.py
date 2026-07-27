@@ -18,8 +18,18 @@ _state: Dict[str, Any] = {
 	"init_pwm": None,
 	"replace_num": None,
 	"test_lock": threading.Lock(),
-	"led_state": {},
+	"led_state": {},  # id -> {on, r, g, b, brightness 0-255}
+	"pattern": None,  # active pattern name or None
+	"pattern_lock": threading.Lock(),
 }
+
+# Layout helpers (match robot_config.yaml pixels)
+FRONT_PANEL = [0, 1, 2, 3, 4, 5]
+# Face ring order for chase: left col bottom→top, right col top→bottom
+FRONT_RING = [0, 1, 2, 5, 4, 3]
+FRONT_IN = [6, 7, 8]
+BACK_IN = [9, 10, 11]
+ALL_INTERIOR = FRONT_IN + BACK_IN
 
 
 def bind_robot(sc=None, lights=None, init_pwm=None, replace_num=None) -> None:
@@ -143,13 +153,17 @@ def register_routes(app) -> None:
 		pixel_meta = {int(p["id"]): p for p in (leds_cfg.get("pixels") or []) if "id" in p}
 		led_states = []
 		for i in range(led_count):
-			st = _state["led_state"].get(i, {"on": False, "r": 0, "g": 0, "b": 0})
+			st = _state["led_state"].get(i) or {}
 			meta_p = pixel_meta.get(i, {})
 			led_states.append({
 				"id": i,
 				"name": meta_p.get("name", "led_%d" % i),
 				"group": meta_p.get("group", "unknown"),
-				**st,
+				"on": bool(st.get("on", False)),
+				"r": int(st.get("r", 0)),
+				"g": int(st.get("g", 0)),
+				"b": int(st.get("b", 0)),
+				"brightness": int(st.get("brightness", 255)),
 			})
 
 		try:
@@ -161,7 +175,23 @@ def register_routes(app) -> None:
 		return jsonify({
 			"ok": True,
 			"motors": motors,
-			"leds": {"count": led_count, "states": led_states},
+			"leds": {
+				"count": led_count,
+				"states": led_states,
+				"pattern": _state.get("pattern"),
+				"patterns": [
+					{"id": "breath", "label": "Breath (all)"},
+					{"id": "breath_front", "label": "Breath (front panel)"},
+					{"id": "front_chase", "label": "Front chase"},
+					{"id": "front_pulse", "label": "Front pulse"},
+					{"id": "identify_groups", "label": "Identify groups"},
+					{"id": "interior_scan", "label": "Interior scan"},
+					{"id": "knight_front", "label": "Knight rider (front)"},
+					{"id": "rainbow_front", "label": "Rainbow (front)"},
+					{"id": "sparkle", "label": "Sparkle (all)"},
+					{"id": "stop", "label": "Stop pattern"},
+				],
+			},
 			"camera": cfg.get("camera") or {},
 			"meta": cfg.get("meta") or {},
 			"config_path": robot_config.config_path(),
@@ -389,7 +419,71 @@ def register_routes(app) -> None:
 		threading.Thread(target=worker, daemon=True).start()
 		return jsonify({"ok": True, "group": group, "ids": ids})
 
+	def _led_count():
+		cfg = robot_config.get_config()
+		return int((cfg.get("leds") or {}).get("count", 12))
+
+	def _ensure_led_state(led_id: int) -> Dict[str, Any]:
+		st = _state["led_state"].get(led_id)
+		if st is None:
+			st = {"on": False, "r": 0, "g": 0, "b": 0, "brightness": 255}
+			_state["led_state"][led_id] = st
+		if "brightness" not in st:
+			st["brightness"] = 255
+		return st
+
+	def _scale_rgb(r, g, b, brightness: int):
+		br = max(0, min(255, int(brightness)))
+		return (
+			int(max(0, min(255, int(r) * br / 255.0))),
+			int(max(0, min(255, int(g) * br / 255.0))),
+			int(max(0, min(255, int(b) * br / 255.0))),
+		)
+
+	def _apply_strip_from_state(lights, count: Optional[int] = None) -> None:
+		"""Push software led_state (with per-LED brightness) to hardware."""
+		if lights is None or not hasattr(lights, "strip"):
+			return
+		from rpi_ws281x import Color
+		n = count if count is not None else _led_count()
+		n = min(n, lights.strip.numPixels())
+		for i in range(n):
+			st = _ensure_led_state(i)
+			if st.get("on"):
+				cr, cg, cb = _scale_rgb(st.get("r", 0), st.get("g", 0), st.get("b", 0), st.get("brightness", 255))
+			else:
+				cr = cg = cb = 0
+			lights.strip.setPixelColor(i, Color(cr, cg, cb))
+		lights.strip.show()
+
+	def _set_pixels_raw(lights, colors: Dict[int, tuple], count: Optional[int] = None) -> None:
+		"""Direct RGB map (already brightness-scaled or absolute) → hardware; updates led_state."""
+		if lights is None or not hasattr(lights, "strip"):
+			return
+		from rpi_ws281x import Color
+		n = count if count is not None else _led_count()
+		n = min(n, lights.strip.numPixels())
+		for i in range(n):
+			if i in colors:
+				r, g, b = colors[i]
+				st = _ensure_led_state(i)
+				# store unscaled if we pass full; for patterns store as-is with brightness 255
+				st["on"] = not (r == 0 and g == 0 and b == 0)
+				st["r"], st["g"], st["b"] = int(r), int(g), int(b)
+				if "brightness" not in st:
+					st["brightness"] = 255
+				br = int(st.get("brightness", 255))
+				cr, cg, cb = _scale_rgb(r, g, b, br)
+				lights.strip.setPixelColor(i, Color(cr, cg, cb))
+			else:
+				lights.strip.setPixelColor(i, Color(0, 0, 0))
+				st = _ensure_led_state(i)
+				st["on"] = False
+				st["r"] = st["g"] = st["b"] = 0
+		lights.strip.show()
+
 	def _stop_led_effects(lights, clear=False):
+		_state["pattern"] = None
 		if lights is None:
 			return
 		if hasattr(lights, "stopEffects"):
@@ -399,6 +493,180 @@ def register_routes(app) -> None:
 				lights.lightMode = "none"
 			if clear and hasattr(lights, "setColor"):
 				lights.setColor(0, 0, 0)
+		if clear:
+			for i in range(_led_count()):
+				st = _ensure_led_state(i)
+				st["on"] = False
+				st["r"] = st["g"] = st["b"] = 0
+
+	def _pattern_catalog():
+		return [
+			{"id": "breath", "label": "Breath (all)", "note": "Classic blue breath"},
+			{"id": "breath_front", "label": "Breath (front panel)", "note": "Only visible face 0–5"},
+			{"id": "front_chase", "label": "Front chase", "note": "Ring around face panel"},
+			{"id": "front_pulse", "label": "Front pulse", "note": "Whole face soft pulse"},
+			{"id": "identify_groups", "label": "Identify groups", "note": "Color each zone; interior then confirmed on face"},
+			{"id": "interior_scan", "label": "Interior scan", "note": "Front/back inside L→R; face shows which zone"},
+			{"id": "knight_front", "label": "Knight rider (front)", "note": "Larson scanner on face"},
+			{"id": "rainbow_front", "label": "Rainbow (front)", "note": "Hue cycle on face only"},
+			{"id": "sparkle", "label": "Sparkle (all)", "note": "Random twinkle; interior hard to see — face denser"},
+			{"id": "stop", "label": "Stop pattern", "note": "Halt effects, keep last static colors"},
+		]
+
+	def _front_confirm(lights, color, seconds=0.35):
+		"""Flash face panel so hidden interior patterns leave a visible cue."""
+		r, g, b = color
+		colors = {i: (r, g, b) for i in FRONT_PANEL}
+		_set_pixels_raw(lights, colors)
+		time.sleep(seconds)
+
+	def _run_pattern_worker(name: str, lights) -> None:
+		try:
+			if name == "breath":
+				if hasattr(lights, "breath"):
+					lights.breath(70, 70, 255)
+				return
+			if name == "breath_front":
+				# Manual breath on face only
+				while _state.get("pattern") == "breath_front":
+					for step in list(range(0, 11)) + list(range(10, -1, -1)):
+						if _state.get("pattern") != "breath_front":
+							return
+						k = step / 10.0
+						colors = {i: (int(70 * k), int(70 * k), int(255 * k)) for i in FRONT_PANEL}
+						_set_pixels_raw(lights, colors)
+						time.sleep(0.04)
+				return
+			if name == "front_chase":
+				while _state.get("pattern") == "front_chase":
+					for idx in FRONT_RING:
+						if _state.get("pattern") != "front_chase":
+							return
+						colors = {i: (0, 0, 0) for i in FRONT_PANEL}
+						colors[idx] = (0, 180, 255)
+						_set_pixels_raw(lights, colors)
+						time.sleep(0.12)
+				return
+			if name == "front_pulse":
+				while _state.get("pattern") == "front_pulse":
+					for step in list(range(0, 12)) + list(range(11, -1, -1)):
+						if _state.get("pattern") != "front_pulse":
+							return
+						k = step / 11.0
+						v = int(40 + 180 * k)
+						colors = {i: (v, v, v) for i in FRONT_PANEL}
+						_set_pixels_raw(lights, colors)
+						time.sleep(0.04)
+				return
+			if name == "identify_groups":
+				# One-shot: each group gets a color; interiors get face confirmation after
+				seq = [
+					("front_panel", FRONT_PANEL, (0, 200, 80), None),
+					("front_interior", FRONT_IN, (0, 120, 255), (0, 120, 255)),
+					("back_interior", BACK_IN, (255, 80, 0), (255, 80, 0)),
+				]
+				for label, ids, color, confirm in seq:
+					if _state.get("pattern") != "identify_groups":
+						return
+					colors = {i: color for i in ids}
+					_set_pixels_raw(lights, colors)
+					time.sleep(0.9)
+					if confirm:
+						# Face echoes the interior color so you know it ran
+						_front_confirm(lights, confirm, 0.45)
+						time.sleep(0.2)
+				_set_pixels_raw(lights, {})
+				_state["pattern"] = None
+				return
+			if name == "interior_scan":
+				while _state.get("pattern") == "interior_scan":
+					# Front interior L→R; face shows cool blue bar on left column
+					for idx in FRONT_IN:
+						if _state.get("pattern") != "interior_scan":
+							return
+						colors = {i: (0, 0, 0) for i in range(_led_count())}
+						colors[idx] = (255, 255, 255)
+						# visible cue: left column on face
+						colors[0] = colors[1] = colors[2] = (0, 80, 200)
+						_set_pixels_raw(lights, colors)
+						time.sleep(0.28)
+					# Back interior; face shows warm right column
+					for idx in BACK_IN:
+						if _state.get("pattern") != "interior_scan":
+							return
+						colors = {i: (0, 0, 0) for i in range(_led_count())}
+						colors[idx] = (255, 255, 255)
+						colors[3] = colors[4] = colors[5] = (200, 60, 0)
+						_set_pixels_raw(lights, colors)
+						time.sleep(0.28)
+				return
+			if name == "knight_front":
+				path = FRONT_RING + list(reversed(FRONT_RING[1:-1]))
+				while _state.get("pattern") == "knight_front":
+					for idx in path:
+						if _state.get("pattern") != "knight_front":
+							return
+						colors = {i: (0, 0, 0) for i in FRONT_PANEL}
+						colors[idx] = (255, 30, 30)
+						# dim trail
+						pos = path.index(idx) if idx in path else 0
+						if pos > 0:
+							colors[path[pos - 1]] = (80, 0, 0)
+						_set_pixels_raw(lights, colors)
+						time.sleep(0.09)
+				return
+			if name == "rainbow_front":
+				import colorsys
+				t0 = time.time()
+				while _state.get("pattern") == "rainbow_front":
+					t = time.time() - t0
+					colors = {}
+					for j, idx in enumerate(FRONT_PANEL):
+						h = (t * 0.15 + j / 6.0) % 1.0
+						r, g, b = colorsys.hsv_to_rgb(h, 1.0, 1.0)
+						colors[idx] = (int(r * 255), int(g * 255), int(b * 255))
+					_set_pixels_raw(lights, colors)
+					time.sleep(0.05)
+				return
+			if name == "sparkle":
+				import random
+				while _state.get("pattern") == "sparkle":
+					colors = {}
+					# denser on face so effect is visible; sparse interior
+					for idx in FRONT_PANEL:
+						if random.random() < 0.45:
+							colors[idx] = (random.randint(80, 255),) * 3
+					for idx in ALL_INTERIOR:
+						if random.random() < 0.2:
+							colors[idx] = (random.randint(40, 180),) * 3
+					_set_pixels_raw(lights, colors)
+					time.sleep(0.08)
+				return
+		except Exception as e:
+			print("pattern worker error:", name, e)
+		finally:
+			if _state.get("pattern") == name and name not in ("breath",):
+				# leave breath owned by RobotLight thread
+				pass
+
+	def _start_pattern(name: str):
+		lights = _lights()
+		if lights is None:
+			return False, "LEDs not available"
+		if name == "stop":
+			_stop_led_effects(lights, clear=False)
+			return True, None
+		_stop_led_effects(lights, clear=False)
+		_state["pattern"] = name
+		if name == "breath":
+			try:
+				lights.breath(70, 70, 255)
+				return True, None
+			except Exception as e:
+				_state["pattern"] = None
+				return False, str(e)
+		threading.Thread(target=_run_pattern_worker, args=(name, lights), daemon=True).start()
+		return True, None
 
 	@app.route("/api/assembly/leds/pause_effects", methods=["POST"])
 	def assembly_leds_pause():
@@ -409,29 +677,61 @@ def register_routes(app) -> None:
 		clear = bool(payload.get("clear", False))
 		try:
 			_stop_led_effects(lights, clear=clear)
-			if clear:
-				_state["led_state"] = {}
 		except Exception as e:
 			return jsonify({"ok": False, "error": str(e)}), 500
 		return jsonify({"ok": True, "cleared": clear})
 
 	@app.route("/api/assembly/leds/resume_breath", methods=["POST"])
 	def assembly_leds_resume_breath():
+		ok, err = _start_pattern("breath")
+		if not ok:
+			return jsonify({"ok": False, "error": err or "failed"}), 500
+		return jsonify({"ok": True, "pattern": "breath"})
+
+	@app.route("/api/assembly/leds/pattern", methods=["POST"])
+	def assembly_leds_pattern():
+		payload = request.get_json(silent=True) or {}
+		name = str(payload.get("name") or payload.get("pattern") or "").strip()
+		known = {p["id"] for p in _pattern_catalog()}
+		if name not in known:
+			return jsonify({"ok": False, "error": "unknown pattern", "patterns": _pattern_catalog()}), 400
+		ok, err = _start_pattern(name)
+		if not ok:
+			return jsonify({"ok": False, "error": err or "failed"}), 503
+		return jsonify({"ok": True, "pattern": name if name != "stop" else None})
+
+	@app.route("/api/assembly/leds/<int:led_id>/brightness", methods=["POST"])
+	def assembly_led_brightness(led_id: int):
 		lights = _lights()
 		if lights is None:
 			return jsonify({"ok": False, "error": "LEDs not available"}), 503
+		count = _led_count()
+		if led_id < 0 or led_id >= count:
+			return jsonify({"ok": False, "error": "led id out of range"}), 400
 		payload = request.get_json(silent=True) or {}
-		r = int(payload.get("r", 70))
-		g = int(payload.get("g", 70))
-		b = int(payload.get("b", 255))
+		st = _ensure_led_state(led_id)
+		if "delta" in payload:
+			br = int(st.get("brightness", 255)) + int(payload["delta"])
+		elif "brightness" in payload:
+			br = int(payload["brightness"])
+		else:
+			return jsonify({"ok": False, "error": "brightness or delta required"}), 400
+		br = max(0, min(255, br))
+		st["brightness"] = br
+		# If off and nudging up, turn on white so the change is visible
+		if br > 0 and not st.get("on"):
+			st["on"] = True
+			if st.get("r", 0) == 0 and st.get("g", 0) == 0 and st.get("b", 0) == 0:
+				st["r"] = st["g"] = st["b"] = 255
+		if br == 0:
+			st["on"] = False
 		try:
-			if hasattr(lights, "breath"):
-				lights.breath(r, g, b)
-			else:
-				return jsonify({"ok": False, "error": "breath not supported"}), 500
+			_stop_led_effects(lights, clear=False)
+			_state["pattern"] = None
+			_apply_strip_from_state(lights, count)
 		except Exception as e:
 			return jsonify({"ok": False, "error": str(e)}), 500
-		return jsonify({"ok": True})
+		return jsonify({"ok": True, "id": led_id, "brightness": br, "on": st["on"]})
 
 	@app.route("/api/assembly/leds/<int:led_id>", methods=["POST"])
 	def assembly_led_set(led_id: int):
@@ -439,14 +739,14 @@ def register_routes(app) -> None:
 		if lights is None:
 			return jsonify({"ok": False, "error": "LEDs not available"}), 503
 
-		cfg = robot_config.get_config()
-		count = int((cfg.get("leds") or {}).get("count", 10))
+		count = _led_count()
 		if led_id < 0 or led_id >= count:
 			return jsonify({"ok": False, "error": "led id out of range"}), 400
 
 		payload = request.get_json(silent=True) or {}
 		state = str(payload.get("state", "on")).lower()
 		r, g, b = _parse_color(payload)
+		st = _ensure_led_state(led_id)
 		if state in ("off", "0", "false"):
 			r = g = b = 0
 			on = False
@@ -455,31 +755,22 @@ def register_routes(app) -> None:
 			if r == 0 and g == 0 and b == 0:
 				r, g, b = 80, 0, 0
 
+		st["on"] = on
+		st["r"], st["g"], st["b"] = r, g, b
+		if "brightness" in payload:
+			st["brightness"] = max(0, min(255, int(payload["brightness"])))
+
 		try:
 			_stop_led_effects(lights, clear=False)
-			# Build full strip buffer from known state so one pixel update is visible
-			for i in range(count):
-				st = _state["led_state"].get(i, {"on": False, "r": 0, "g": 0, "b": 0})
-				if i == led_id:
-					cr, cg, cb = r, g, b
-				elif st.get("on"):
-					cr, cg, cb = int(st.get("r", 0)), int(st.get("g", 0)), int(st.get("b", 0))
-				else:
-					cr, cg, cb = 0, 0, 0
-				if hasattr(lights, "strip"):
-					from rpi_ws281x import Color
-					lights.strip.setPixelColor(i, Color(cr, cg, cb))
-			if hasattr(lights, "strip"):
-				lights.strip.show()
-			elif hasattr(lights, "setSomeColor"):
-				lights.setSomeColor(r, g, b, [led_id])
-			else:
-				lights.setColor(r, g, b)
+			_state["pattern"] = None
+			_apply_strip_from_state(lights, count)
 		except Exception as e:
 			return jsonify({"ok": False, "error": str(e)}), 500
 
-		_state["led_state"][led_id] = {"on": on, "r": r, "g": g, "b": b}
-		return jsonify({"ok": True, "id": led_id, "on": on, "r": r, "g": g, "b": b})
+		return jsonify({
+			"ok": True, "id": led_id, "on": on,
+			"r": r, "g": g, "b": b, "brightness": st["brightness"],
+		})
 
 	@app.route("/api/assembly/leds/all", methods=["POST"])
 	def assembly_leds_all():
@@ -487,8 +778,7 @@ def register_routes(app) -> None:
 		if lights is None:
 			return jsonify({"ok": False, "error": "LEDs not available"}), 503
 
-		cfg = robot_config.get_config()
-		count = int((cfg.get("leds") or {}).get("count", 10))
+		count = _led_count()
 		payload = request.get_json(silent=True) or {}
 		state = str(payload.get("state", "off")).lower()
 		if state in ("off", "0", "false"):
@@ -500,10 +790,13 @@ def register_routes(app) -> None:
 
 		try:
 			_stop_led_effects(lights, clear=False)
-			lights.setColor(r, g, b)
+			_state["pattern"] = None
+			for i in range(count):
+				st = _ensure_led_state(i)
+				st["on"] = on
+				st["r"], st["g"], st["b"] = r, g, b
+			_apply_strip_from_state(lights, count)
 		except Exception as e:
 			return jsonify({"ok": False, "error": str(e)}), 500
 
-		for i in range(count):
-			_state["led_state"][i] = {"on": on, "r": r, "g": g, "b": b}
 		return jsonify({"ok": True, "count": count, "on": on, "r": r, "g": g, "b": b})

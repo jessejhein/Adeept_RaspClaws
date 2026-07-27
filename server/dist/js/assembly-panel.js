@@ -5,6 +5,7 @@
   var pollTimer = null;
   var busy = false;
   var lastMotorSig = "";
+  var lastLedStruct = "";
 
   function apiBase() {
     return window.location.protocol + "//" + window.location.hostname + ":5000";
@@ -75,29 +76,93 @@
     tbody.innerHTML = html;
   }
 
+  function renderPatterns(leds) {
+    var bar = $("#assembly-pattern-bar");
+    if (!bar) return;
+    var patterns = (leds && leds.patterns) || [];
+    var active = (leds && leds.pattern) || "";
+    if (!bar.dataset.built) {
+      var html = "<span class=\"pattern-label\">Patterns:</span> ";
+      patterns.forEach(function (p) {
+        html += "<button type=\"button\" class=\"btn-pattern\" data-pattern=\"" +
+          escapeHtml(p.id) + "\" title=\"" + escapeHtml(p.note || p.label) + "\">" +
+          escapeHtml(p.label) + "</button> ";
+      });
+      bar.innerHTML = html;
+      bar.dataset.built = "1";
+    }
+    bar.querySelectorAll(".btn-pattern").forEach(function (btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-pattern") === active);
+    });
+  }
+
   function renderLeds(leds) {
     var grid = $("#assembly-led-grid");
     if (!grid) return;
     var count = (leds && leds.count) || 0;
     var states = (leds && leds.states) || [];
-    var html = "";
-    for (var i = 0; i < count; i++) {
-      var st = states[i] || { on: false, r: 0, g: 0, b: 0, name: "led_" + i, group: "" };
-      var bg = st.on ? ("rgb(" + st.r + "," + st.g + "," + st.b + ")") : "#222";
-      var label = (st.name ? st.name : ("LED " + i));
-      var group = st.group ? (" · " + st.group) : "";
-      html += "<div class=\"led-cell\" data-id=\"" + i + "\">" +
-        "<div class=\"led-swatch\" style=\"background:" + bg + "\"></div>" +
-        "<div class=\"led-label\" title=\"#" + i + group + "\">#" + i + " " + escapeHtml(label) + "</div>" +
-        "<div class=\"led-btns\">" +
-          "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#ff0000\">R</button>" +
-          "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#00ff00\">G</button>" +
-          "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#0000ff\">B</button>" +
-          "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#ffffff\">W</button>" +
-          "<button type=\"button\" data-led=\"" + i + "\" data-state=\"off\">Off</button>" +
-        "</div></div>";
+    renderPatterns(leds);
+
+    var struct = count + "|" + states.map(function (s) {
+      return (s.id + ":" + (s.name || ""));
+    }).join(",");
+
+    if (struct !== lastLedStruct) {
+      lastLedStruct = struct;
+      var html = "";
+      for (var i = 0; i < count; i++) {
+        var st = states[i] || {
+          on: false, r: 0, g: 0, b: 0, brightness: 255,
+          name: "led_" + i, group: ""
+        };
+        var br = (st.brightness != null) ? st.brightness : 255;
+        var label = st.name ? st.name : ("LED " + i);
+        var group = st.group ? (" · " + st.group) : "";
+        html += "<div class=\"led-cell\" data-id=\"" + i + "\">" +
+          "<div class=\"led-swatch\" data-swatch></div>" +
+          "<div class=\"led-label\" title=\"#" + i + group + "\">#" + i + " " +
+            escapeHtml(label) + "</div>" +
+          "<div class=\"led-btns\">" +
+            "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#ff0000\">R</button>" +
+            "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#00ff00\">G</button>" +
+            "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#0000ff\">B</button>" +
+            "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#ffffff\">W</button>" +
+            "<button type=\"button\" data-led=\"" + i + "\" data-state=\"off\">Off</button>" +
+          "</div>" +
+          "<div class=\"led-bright\">" +
+            "<button type=\"button\" class=\"btn-br\" data-led=\"" + i + "\" data-delta=\"-10\">−</button>" +
+            "<input type=\"range\" class=\"led-slider\" data-led=\"" + i +
+              "\" min=\"0\" max=\"255\" value=\"" + br + "\" />" +
+            "<button type=\"button\" class=\"btn-br\" data-led=\"" + i + "\" data-delta=\"10\">+</button>" +
+            "<span class=\"led-br-val\" data-led=\"" + i + "\">" + br + "</span>" +
+          "</div></div>";
+      }
+      grid.innerHTML = html;
     }
-    grid.innerHTML = html;
+
+    // Live update swatches / brightness without killing sliders in use
+    for (var j = 0; j < count; j++) {
+      var st2 = states[j] || { on: false, r: 0, g: 0, b: 0, brightness: 255 };
+      var cell = grid.querySelector('.led-cell[data-id="' + j + '"]');
+      if (!cell) continue;
+      var sw = cell.querySelector("[data-swatch]");
+      if (sw) {
+        var scale = ((st2.brightness != null) ? st2.brightness : 255) / 255;
+        var rr = st2.on ? Math.round(st2.r * scale) : 0;
+        var gg = st2.on ? Math.round(st2.g * scale) : 0;
+        var bb = st2.on ? Math.round(st2.b * scale) : 0;
+        sw.style.background = st2.on ? ("rgb(" + rr + "," + gg + "," + bb + ")") : "#222";
+      }
+      var slider = cell.querySelector(".led-slider");
+      var valEl = cell.querySelector(".led-br-val");
+      var br2 = (st2.brightness != null) ? st2.brightness : 255;
+      if (slider && document.activeElement !== slider) {
+        slider.value = String(br2);
+      }
+      if (valEl && !(slider && document.activeElement === slider)) {
+        valEl.textContent = String(br2);
+      }
+    }
   }
 
   function renderHealth(th) {
@@ -228,6 +293,9 @@
           "<tbody id=\"assembly-motor-body\"></tbody>" +
         "</table>" +
         "<h4>LEDs</h4>" +
+        "<div id=\"assembly-pattern-bar\" class=\"assembly-pattern-bar\"></div>" +
+        "<p class=\"assembly-led-hint\">Brightness 0–255 (decimal). Interior LEDs are not line-of-sight — " +
+          "use <em>Identify groups</em> / <em>Interior scan</em> (face panel echoes the zone).</p>" +
         "<div id=\"assembly-led-grid\" class=\"assembly-led-grid\"></div>" +
       "</div>" +
       "<div id=\"assembly-status\" class=\"assembly-status\"></div>";
@@ -280,9 +348,31 @@
 
     $("#assembly-leds-breath", panel).addEventListener("click", function () {
       runAction("Resume breath", function () {
-        return api("/api/assembly/leds/resume_breath", {
+        return api("/api/assembly/leds/pattern", {
           method: "POST",
-          body: JSON.stringify({})
+          body: JSON.stringify({ name: "breath" })
+        });
+      });
+    });
+
+    panel.addEventListener("input", function (ev) {
+      var t = ev.target;
+      if (!t || !t.classList || !t.classList.contains("led-slider")) return;
+      var led = t.getAttribute("data-led");
+      var br = parseInt(t.value, 10);
+      var valEl = panel.querySelector('.led-br-val[data-led="' + led + '"]');
+      if (valEl) valEl.textContent = String(br);
+    });
+
+    panel.addEventListener("change", function (ev) {
+      var t = ev.target;
+      if (!t || !t.classList || !t.classList.contains("led-slider")) return;
+      var led = t.getAttribute("data-led");
+      var br = parseInt(t.value, 10);
+      runAction("Brightness " + led + " → " + br, function () {
+        return api("/api/assembly/leds/" + led + "/brightness", {
+          method: "POST",
+          body: JSON.stringify({ brightness: br })
         });
       });
     });
@@ -290,6 +380,29 @@
     panel.addEventListener("click", function (ev) {
       var t = ev.target;
       if (!t || !t.getAttribute) return;
+
+      if (t.classList.contains("btn-pattern")) {
+        var pname = t.getAttribute("data-pattern");
+        runAction("Pattern " + pname, function () {
+          return api("/api/assembly/leds/pattern", {
+            method: "POST",
+            body: JSON.stringify({ name: pname })
+          });
+        });
+        return;
+      }
+
+      if (t.classList.contains("btn-br")) {
+        var bled = t.getAttribute("data-led");
+        var bdelta = parseInt(t.getAttribute("data-delta"), 10);
+        runAction("Brightness " + bled + " " + (bdelta > 0 ? "+" : "") + bdelta, function () {
+          return api("/api/assembly/leds/" + bled + "/brightness", {
+            method: "POST",
+            body: JSON.stringify({ delta: bdelta })
+          });
+        });
+        return;
+      }
 
       if (t.classList.contains("btn-nudge")) {
         var nid = t.getAttribute("data-id");
