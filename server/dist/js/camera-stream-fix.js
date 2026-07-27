@@ -20,6 +20,13 @@
     img.style.width = "100%";
     img.style.height = "auto";
 
+    // Recover from stalled/broken MJPEG (browser or Pi overload)
+    img.onerror = function () {
+      window.setTimeout(function () {
+        img.src = streamUrl();
+      }, 1500);
+    };
+
     canvas.dataset.mjpegFixed = "1";
     canvas.parentNode.replaceChild(img, canvas);
     return true;

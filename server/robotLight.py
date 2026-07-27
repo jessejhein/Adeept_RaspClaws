@@ -133,25 +133,34 @@ class RobotLight(threading.Thread):
 
 	# Define functions which animate LEDs in various ways.
 	def setColor(self, R, G, B):
-		"""Wipe color across display a pixel at a time."""
-		color = Color(int(R),int(G),int(B))
-		for i in range(self.strip.numPixels()):
+		"""Set all pixels then show once (cheaper / more reliable under CPU load)."""
+		color = Color(int(R), int(G), int(B))
+		n = self.strip.numPixels()
+		for i in range(n):
 			self.strip.setPixelColor(i, color)
-			self.strip.show()
+		self.strip.show()
 
 
 	def setSomeColor(self, R, G, B, ID):
-		color = Color(int(R),int(G),int(B))
-		#print(int(R),'  ',int(G),'  ',int(B))
+		"""Set listed pixel indices then show once."""
+		color = Color(int(R), int(G), int(B))
+		n = self.strip.numPixels()
 		for i in ID:
-			self.strip.setPixelColor(i, color)
-			self.strip.show()
+			if 0 <= int(i) < n:
+				self.strip.setPixelColor(int(i), color)
+		self.strip.show()
+
+
+	def stopEffects(self, clear=False):
+		"""Stop breath/police without necessarily blanking the strip."""
+		self.lightMode = 'none'
+		self.__flag.clear()
+		if clear:
+			self.setColor(0, 0, 0)
 
 
 	def pause(self):
-		self.lightMode = 'none'
-		self.setColor(0,0,0)
-		self.__flag.clear()
+		self.stopEffects(clear=True)
 
 
 	def resume(self):
@@ -256,8 +265,11 @@ class RobotLight(threading.Thread):
 
 
 	def lightChange(self):
+		# Do not auto-clear LEDs on 'none' — that fought assembly pixel tests and
+		# blanked the strip after every effect stop.
 		if self.lightMode == 'none':
-			self.pause()
+			self.__flag.clear()
+			return
 		elif self.lightMode == 'police':
 			self.policeProcessing()
 		elif self.lightMode == 'breath':

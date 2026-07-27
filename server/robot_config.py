@@ -303,6 +303,23 @@ def sync_centers_from_list(centers: List[int], cfg: Optional[Dict[str, Any]] = N
 	return cfg
 
 
+class _IndentDumper(yaml.SafeDumper):
+	"""PyYAML otherwise emits list items flush-left under keys (motors:\\n- id:)."""
+
+	def increase_indent(self, flow=False, indentless=False):
+		return super(_IndentDumper, self).increase_indent(flow, False)
+
+
+def _represent_short_int_list(dumper, data):
+	# channel_swaps: [[10, 11]] -> "- [10, 11]" instead of nested block lists
+	if len(data) == 2 and all(isinstance(x, int) for x in data):
+		return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
+	return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=False)
+
+
+_IndentDumper.add_representer(list, _represent_short_int_list)
+
+
 def save_config(cfg: Optional[Dict[str, Any]] = None, path: Optional[str] = None) -> str:
 	if yaml is None:
 		raise RuntimeError("PyYAML is required to save config")
@@ -316,11 +333,20 @@ def save_config(cfg: Optional[Dict[str, Any]] = None, path: Optional[str] = None
 		# Keep channel only if remapped from id (or always keep for clarity)
 		if int(m.get("channel", m["id"])) == int(m["id"]):
 			m.pop("channel", None)
-	body = yaml.safe_dump(to_dump, default_flow_style=False, sort_keys=False, allow_unicode=True)
+	body = yaml.dump(
+		to_dump,
+		Dumper=_IndentDumper,
+		default_flow_style=False,
+		sort_keys=False,
+		allow_unicode=True,
+		indent=2,
+		width=88,
+	)
 	header = (
 		"# RaspClaws robot configuration (auto-saved).\n"
 		"# min/max: integer stop, or null for no software stop.\n"
-		"# Even leg ports = shoulder; odd = knee. Hand comments in motors may be replaced on save.\n\n"
+		"# Even leg ports = shoulder; odd = knee. Hand comments in motors may be replaced on save.\n"
+		"# channel_swaps: pairs of logical HAT ports that were plugged into each other.\n\n"
 	)
 	with open(path, "w", encoding="utf-8") as f:
 		f.write(header)

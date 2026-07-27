@@ -1,8 +1,10 @@
 (function () {
-  var POLL_MS = 800;
+  // Keep this slow: aggressive polling starved camera MJPEG + WS281x on the Pi.
+  var POLL_MS = 3000;
   var panel = null;
   var pollTimer = null;
   var busy = false;
+  var lastMotorSig = "";
 
   function apiBase() {
     return window.location.protocol + "//" + window.location.hostname + ":5000";
@@ -126,22 +128,42 @@
         setStatus(st.error || "status failed", true);
         return;
       }
-      renderMotors(st.motors);
+      // Avoid rewriting the whole table unless values changed (saves browser + flash).
+      var sig = JSON.stringify(st.motors || []);
+      if (sig !== lastMotorSig) {
+        lastMotorSig = sig;
+        renderMotors(st.motors);
+      } else {
+        // light update of current/deg cells only
+        (st.motors || []).forEach(function (m) {
+          if (!m.enabled) return;
+          var row = panel.querySelector('tr[data-id="' + m.id + '"]');
+          if (!row) return;
+          var cur = row.querySelector(".current");
+          var deg = row.querySelector(".deg");
+          var cen = row.querySelector(".center");
+          if (cur) cur.textContent = m.current;
+          if (deg) deg.textContent = m.degrees_from_center + "°";
+          if (cen) cen.textContent = m.center;
+        });
+      }
       renderLeds(st.leds);
+      if (st.throttled) renderHealth(st.throttled);
       setStatus("Updated " + new Date().toLocaleTimeString());
     } catch (e) {
       setStatus(String(e), true);
     }
-    try {
-      var h = await api("/api/assembly/health");
-      if (h.ok) renderHealth(h.throttled);
-    } catch (e2) { /* optional */ }
   }
 
   async function onOpen() {
+    // Stop breath so pixel tests are visible; do NOT clear strip to black.
     try {
-      await api("/api/assembly/leds/pause_effects", { method: "POST", body: "{}" });
+      await api("/api/assembly/leds/pause_effects", {
+        method: "POST",
+        body: JSON.stringify({ clear: false })
+      });
     } catch (e) { /* ignore */ }
+    lastMotorSig = "";
     refresh();
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(refresh, POLL_MS);
@@ -193,6 +215,7 @@
         "<button type=\"button\" id=\"assembly-test-knees\">Test knees</button>" +
         "<button type=\"button\" id=\"assembly-save\">Save config</button>" +
         "<button type=\"button\" id=\"assembly-leds-off\">All LEDs off</button>" +
+        "<button type=\"button\" id=\"assembly-leds-breath\">Resume breath</button>" +
       "</div>" +
       "<div class=\"assembly-scroll\">" +
         "<h4>Motors</h4>" +
@@ -249,6 +272,15 @@
         return api("/api/assembly/leds/all", {
           method: "POST",
           body: JSON.stringify({ state: "off" })
+        });
+      });
+    });
+
+    $("#assembly-leds-breath", panel).addEventListener("click", function () {
+      runAction("Resume breath", function () {
+        return api("/api/assembly/leds/resume_breath", {
+          method: "POST",
+          body: JSON.stringify({})
         });
       });
     });

@@ -150,6 +150,7 @@ def register_routes(app) -> None:
 		except Exception as e:
 			return jsonify({"ok": False, "error": str(e)}), 503
 
+		# Include power health here so the UI can avoid a second poll (camera/LED need CPU).
 		return jsonify({
 			"ok": True,
 			"motors": motors,
@@ -157,6 +158,7 @@ def register_routes(app) -> None:
 			"camera": cfg.get("camera") or {},
 			"meta": cfg.get("meta") or {},
 			"config_path": robot_config.config_path(),
+			"throttled": _read_throttled(),
 		})
 
 	@app.route("/api/assembly/health", methods=["GET"])
@@ -380,17 +382,46 @@ def register_routes(app) -> None:
 		threading.Thread(target=worker, daemon=True).start()
 		return jsonify({"ok": True, "group": group, "ids": ids})
 
+	def _stop_led_effects(lights, clear=False):
+		if lights is None:
+			return
+		if hasattr(lights, "stopEffects"):
+			lights.stopEffects(clear=clear)
+		else:
+			if hasattr(lights, "lightMode"):
+				lights.lightMode = "none"
+			if clear and hasattr(lights, "setColor"):
+				lights.setColor(0, 0, 0)
+
 	@app.route("/api/assembly/leds/pause_effects", methods=["POST"])
 	def assembly_leds_pause():
 		lights = _lights()
 		if lights is None:
 			return jsonify({"ok": False, "error": "LEDs not available"}), 503
+		payload = request.get_json(silent=True) or {}
+		clear = bool(payload.get("clear", False))
 		try:
-			if hasattr(lights, "lightMode"):
-				lights.lightMode = "none"
-			if hasattr(lights, "setColor"):
-				lights.setColor(0, 0, 0)
-			_state["led_state"] = {}
+			_stop_led_effects(lights, clear=clear)
+			if clear:
+				_state["led_state"] = {}
+		except Exception as e:
+			return jsonify({"ok": False, "error": str(e)}), 500
+		return jsonify({"ok": True, "cleared": clear})
+
+	@app.route("/api/assembly/leds/resume_breath", methods=["POST"])
+	def assembly_leds_resume_breath():
+		lights = _lights()
+		if lights is None:
+			return jsonify({"ok": False, "error": "LEDs not available"}), 503
+		payload = request.get_json(silent=True) or {}
+		r = int(payload.get("r", 70))
+		g = int(payload.get("g", 70))
+		b = int(payload.get("b", 255))
+		try:
+			if hasattr(lights, "breath"):
+				lights.breath(r, g, b)
+			else:
+				return jsonify({"ok": False, "error": "breath not supported"}), 500
 		except Exception as e:
 			return jsonify({"ok": False, "error": str(e)}), 500
 		return jsonify({"ok": True})
@@ -415,12 +446,25 @@ def register_routes(app) -> None:
 		else:
 			on = True
 			if r == 0 and g == 0 and b == 0:
-				r, g, b = 40, 0, 0
+				r, g, b = 80, 0, 0
 
 		try:
-			if hasattr(lights, "lightMode"):
-				lights.lightMode = "none"
-			if hasattr(lights, "setSomeColor"):
+			_stop_led_effects(lights, clear=False)
+			# Build full strip buffer from known state so one pixel update is visible
+			for i in range(count):
+				st = _state["led_state"].get(i, {"on": False, "r": 0, "g": 0, "b": 0})
+				if i == led_id:
+					cr, cg, cb = r, g, b
+				elif st.get("on"):
+					cr, cg, cb = int(st.get("r", 0)), int(st.get("g", 0)), int(st.get("b", 0))
+				else:
+					cr, cg, cb = 0, 0, 0
+				if hasattr(lights, "strip"):
+					from rpi_ws281x import Color
+					lights.strip.setPixelColor(i, Color(cr, cg, cb))
+			if hasattr(lights, "strip"):
+				lights.strip.show()
+			elif hasattr(lights, "setSomeColor"):
 				lights.setSomeColor(r, g, b, [led_id])
 			else:
 				lights.setColor(r, g, b)
@@ -448,8 +492,7 @@ def register_routes(app) -> None:
 			on = True
 
 		try:
-			if hasattr(lights, "lightMode"):
-				lights.lightMode = "none"
+			_stop_led_effects(lights, clear=False)
 			lights.setColor(r, g, b)
 		except Exception as e:
 			return jsonify({"ok": False, "error": str(e)}), 500

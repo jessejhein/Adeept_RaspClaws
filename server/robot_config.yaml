@@ -1,8 +1,7 @@
-# RaspClaws robot configuration
-# PWM: PCA9685 ticks at ~50 Hz (typical usable range ~100-560).
-# min/max: integer software stop, or null for no stop on that side.
-# Even leg ports = shoulder (forward/back). Odd = knee (up/down the leg).
-# Degrees are estimates: (current - center) scaled by angle_range_deg.
+# RaspClaws robot configuration (auto-saved).
+# min/max: integer stop, or null for no software stop.
+# Even leg ports = shoulder; odd = knee. Hand comments in motors may be replaced on save.
+# channel_swaps: pairs of logical HAT ports that were plugged into each other.
 
 meta:
   name: raspclaws
@@ -10,27 +9,18 @@ meta:
   angle_range_deg: 180
   ctrl_range_min: 100
   ctrl_range_max: 560
-  # Swap logical software channels that were plugged into each other's HAT ports.
-  # Example: front-right shoulder/knee connectors reversed on the HAT.
   channel_swaps:
     - [10, 11]
-
 leds:
-  # Physical WS281x count on this build
   count: 10
   pin_bcm: 12
   brightness: 128
-
 camera:
   pan_channel: 12
   tilt_channel: 13
-  # LR pan is correct on this robot; leave invert_pan false.
   invert_pan: false
-  # Escape hatch if Up/Down still feels wrong after the webServer sign fix.
   invert_tilt: false
-
 motors:
-  # --- Left side: front → mid → rear ---
   - id: 0
     name: front_left_shoulder
     center: 280
@@ -73,8 +63,6 @@ motors:
     max: 560
     invert: false
     enabled: true
-
-  # --- Right side: rear → mid → front ---
   - id: 6
     name: rear_right_shoulder
     center: 305
@@ -103,8 +91,8 @@ motors:
     max: 560
     invert: false
     enabled: true
-  # Front-right: HAT ports 10/11 had shoulder/knee plugs reversed — see meta.channel_swaps.
   - id: 10
+    channel: 11
     name: front_right_shoulder
     center: 280
     min: 80
@@ -112,14 +100,13 @@ motors:
     invert: false
     enabled: true
   - id: 11
+    channel: 10
     name: front_right_knee
     center: 300
     min: 100
     max: 560
     invert: false
     enabled: true
-
-  # --- Camera ---
   - id: 12
     name: camera_pan
     center: 300
@@ -134,8 +121,6 @@ motors:
     max: 560
     invert: false
     enabled: true
-
-  # --- Unused PCA9685 channels ---
   - id: 14
     name: spare_14
     center: 300
