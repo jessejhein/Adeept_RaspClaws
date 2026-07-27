@@ -16,13 +16,25 @@ leds:
   # must stay off: dtparam=audio=off in /boot/firmware/config.txt
   count: 12
   pin_bcm: 12
+  # Hardware strip gain (Adafruit_NeoPixel). Keep high; soft-cap patterns below.
   brightness: 255
   # Color order on each multi-emitter pixel (physical, looking at the face):
   #   R / G / B / W arranged Right → Left (subtle, like subpixels on an LCD).
   # Library still uses RGB channel args; W is a separate emitter on RGBW packs.
   color_order: RGBW_RL
-  # Per-pixel software brightness (0–255) is runtime-only via Assembly panel;
-  # strip-level max is brightness: above. Patterns: front_chase, interior_scan, etc.
+  # Pattern / breath behaviour (assembly + idle breath)
+  patterns:
+    # Peak channel level for breath/pulses (0–255). User soft-cap; default 200 not 255.
+    max_level: 200
+    # If true, intensity ramps step in perceptual space (gamma≈2.2) then map to PWM.
+    # If false, linear PWM ramp (old behaviour).
+    perceptual_ramp: true
+    # Breath timing — larger delay and more steps = slower, smoother breath
+    breath_step_delay_s: 0.08
+    breath_steps: 24
+    # Peak RGB for idle / "Breath (all)" (clamped to max_level)
+    breath_color: [55, 55, 200]
+  # Per-pixel software brightness (0–255) is runtime-only via Assembly panel.
   #
   # Boot note (not implemented yet): LEDs init late in webServer.py — only after
   # Flask/camera thread starts (~15–20s+). For early boot feedback, RobotLight

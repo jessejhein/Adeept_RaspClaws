@@ -98,6 +98,15 @@ def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
 	leds.setdefault("pin_bcm", 12)
 	leds.setdefault("brightness", 255)
 	leds.setdefault("color_order", "RGBW_RL")
+	pat = leds.setdefault("patterns", {})
+	if not isinstance(pat, dict):
+		pat = {}
+		leds["patterns"] = pat
+	pat.setdefault("max_level", 200)
+	pat.setdefault("perceptual_ramp", True)
+	pat.setdefault("breath_step_delay_s", 0.08)
+	pat.setdefault("breath_steps", 24)
+	pat.setdefault("breath_color", [55, 55, 200])
 	# Optional named map; used by assembly UI / docs (see robot_config.yaml comments)
 	if not leds.get("pixels"):
 		leds["pixels"] = [
@@ -369,3 +378,62 @@ def clamp_pwm(value: int, motor: Dict[str, Any], meta: Optional[Dict[str, Any]] 
 	lo = effective_min(motor, meta)
 	hi = effective_max(motor, meta)
 	return max(lo, min(hi, int(value)))
+
+
+def led_pattern_settings(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+	"""Breath/pattern ramp settings from robot_config.yaml leds.patterns."""
+	cfg = cfg or get_config()
+	leds = cfg.get("leds") or {}
+	pat = leds.get("patterns") or {}
+	max_level = int(pat.get("max_level", 200))
+	max_level = max(1, min(255, max_level))
+	color = pat.get("breath_color") or [55, 55, 200]
+	if not isinstance(color, (list, tuple)) or len(color) < 3:
+		color = [55, 55, 200]
+	# Clamp breath color channels to max_level
+	breath_color = (
+		max(0, min(max_level, int(color[0]))),
+		max(0, min(max_level, int(color[1]))),
+		max(0, min(max_level, int(color[2]))),
+	)
+	steps = int(pat.get("breath_steps", 24))
+	steps = max(4, min(128, steps))
+	delay = float(pat.get("breath_step_delay_s", 0.08))
+	delay = max(0.01, min(1.0, delay))
+	return {
+		"max_level": max_level,
+		"perceptual_ramp": bool(pat.get("perceptual_ramp", True)),
+		"breath_step_delay_s": delay,
+		"breath_steps": steps,
+		"breath_color": breath_color,
+		"gamma": float(pat.get("gamma", 2.2)),
+	}
+
+
+def ramp_intensity(t: float, max_level: int = 200, perceptual: bool = True, gamma: float = 2.2) -> int:
+	"""Map t in [0,1] to PWM 0..max_level.
+
+	perceptual=True: t is treated as equal *perceived* brightness fraction; PWM is
+	t**gamma so mid-ramp is dimmer (matches LED-on-linear-PWM perception).
+	perceptual=False: linear PWM = t * max_level.
+	"""
+	t = max(0.0, min(1.0, float(t)))
+	max_level = max(0, min(255, int(max_level)))
+	if max_level <= 0:
+		return 0
+	if perceptual:
+		# t=0..1 in lightness domain → linear power/PWM
+		return int(round((t ** gamma) * max_level))
+	return int(round(t * max_level))
+
+
+def scale_color_to_level(r: int, g: int, b: int, level: int, peak: Optional[int] = None) -> tuple:
+	"""Scale RGB so the peak channel tracks `level` (0..255)."""
+	pk = peak if peak is not None else max(int(r), int(g), int(b), 1)
+	level = max(0, min(255, int(level)))
+	s = float(level) / float(pk)
+	return (
+		int(max(0, min(255, round(int(r) * s)))),
+		int(max(0, min(255, round(int(g) * s)))),
+		int(max(0, min(255, round(int(b) * s)))),
+	)

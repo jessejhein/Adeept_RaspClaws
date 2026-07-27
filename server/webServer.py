@@ -375,7 +375,12 @@ if __name__ == '__main__':
 			led_bright = int(leds.get('brightness', 128))
 		RL = robotLight.RobotLight(led_count=led_count, led_pin=led_pin, led_brightness=led_bright)
 		RL.start()
-		RL.breath(70,70,255)
+		# Peak/color/speed from robot_config.yaml leds.patterns (max_level, perceptual_ramp, …)
+		try:
+			bc = robot_config.led_pattern_settings().get("breath_color", (55, 55, 200))
+			RL.breath(bc[0], bc[1], bc[2])
+		except Exception:
+			RL.breath(55, 55, 200)
 	except Exception as e:
 		print('Use "sudo pip3 install rpi_ws281x" to install WS_281x package\n使用"sudo pip3 install rpi_ws281x"命令来安装rpi_ws281x')
 		print(e)

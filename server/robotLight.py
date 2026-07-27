@@ -194,26 +194,83 @@ class RobotLight(threading.Thread):
 			time.sleep(0.1)
 
 
-	def breath(self, R_input, G_input, B_input):
+	def _pattern_settings(self):
+		"""Load breath/ramp settings from robot_config (live if available)."""
+		try:
+			import robot_config
+			return robot_config.led_pattern_settings()
+		except Exception:
+			return {
+				"max_level": 200,
+				"perceptual_ramp": True,
+				"breath_step_delay_s": 0.08,
+				"breath_steps": 24,
+				"breath_color": (55, 55, 200),
+				"gamma": 2.2,
+			}
+
+	def breath(self, R_input=None, G_input=None, B_input=None):
+		"""Start breathing. RGB optional — defaults / clamp from robot_config patterns."""
+		settings = self._pattern_settings()
+		max_level = settings["max_level"]
+		if R_input is None or G_input is None or B_input is None:
+			R_input, G_input, B_input = settings["breath_color"]
+		# Soft-cap peak to configured max_level
+		peak = max(int(R_input), int(G_input), int(B_input), 1)
+		if peak > max_level:
+			scale = max_level / float(peak)
+			R_input = int(round(int(R_input) * scale))
+			G_input = int(round(int(G_input) * scale))
+			B_input = int(round(int(B_input) * scale))
 		self.lightMode = 'breath'
-		self.colorBreathR = R_input
-		self.colorBreathG = G_input
-		self.colorBreathB = B_input
+		self.colorBreathR = int(R_input)
+		self.colorBreathG = int(G_input)
+		self.colorBreathB = int(B_input)
 		self.resume()
 
 
 	def breathProcessing(self):
 		while self.lightMode == 'breath':
-			for i in range(0,self.breathSteps):
+			settings = self._pattern_settings()
+			steps = int(settings["breath_steps"])
+			delay = float(settings["breath_step_delay_s"])
+			perceptual = bool(settings["perceptual_ramp"])
+			gamma = float(settings.get("gamma", 2.2))
+			max_level = int(settings["max_level"])
+			# Peak color already capped in breath(); still enforce max_level
+			pr = min(self.colorBreathR, max_level)
+			pg = min(self.colorBreathG, max_level)
+			pb = min(self.colorBreathB, max_level)
+			try:
+				import robot_config
+				ramp = robot_config.ramp_intensity
+			except Exception:
+				def ramp(t, max_level=200, perceptual=True, gamma=2.2):
+					t = max(0.0, min(1.0, float(t)))
+					if perceptual:
+						return int(round((t ** gamma) * max_level))
+					return int(round(t * max_level))
+
+			# Use max channel as intensity envelope peak
+			peak = max(pr, pg, pb, 1)
+			# Up
+			for i in range(0, steps + 1):
 				if self.lightMode != 'breath':
 					break
-				self.setColor(self.colorBreathR*i/self.breathSteps, self.colorBreathG*i/self.breathSteps, self.colorBreathB*i/self.breathSteps)
-				time.sleep(0.03)
-			for i in range(0,self.breathSteps):
+				t = i / float(steps)
+				level = ramp(t, max_level=peak, perceptual=perceptual, gamma=gamma)
+				s = level / float(peak)
+				self.setColor(pr * s, pg * s, pb * s)
+				time.sleep(delay)
+			# Down
+			for i in range(0, steps + 1):
 				if self.lightMode != 'breath':
 					break
-				self.setColor(self.colorBreathR-(self.colorBreathR*i/self.breathSteps), self.colorBreathG-(self.colorBreathG*i/self.breathSteps), self.colorBreathB-(self.colorBreathB*i/self.breathSteps))
-				time.sleep(0.03)
+				t = 1.0 - (i / float(steps))
+				level = ramp(t, max_level=peak, perceptual=perceptual, gamma=gamma)
+				s = level / float(peak)
+				self.setColor(pr * s, pg * s, pb * s)
+				time.sleep(delay)
 
 
 	def frontLight(self, switch):
