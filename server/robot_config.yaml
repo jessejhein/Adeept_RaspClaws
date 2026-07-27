@@ -33,9 +33,9 @@ motors:
   # --- Left side: front → mid → rear ---
   - id: 0
     name: front_left_shoulder
-    center: 300
-    min: 100
-    max: 560
+    center: 280
+    min: 80
+    max: 540
     invert: false
     enabled: true
   - id: 1
@@ -61,9 +61,9 @@ motors:
     enabled: true
   - id: 4
     name: rear_left_shoulder
-    center: 300
-    min: 100
-    max: 560
+    center: 310
+    min: 110
+    max: 570
     invert: false
     enabled: true
   - id: 5
@@ -77,9 +77,9 @@ motors:
   # --- Right side: rear → mid → front ---
   - id: 6
     name: rear_right_shoulder
-    center: 300
-    min: 100
-    max: 560
+    center: 305
+    min: 105
+    max: 565
     invert: false
     enabled: true
   - id: 7
@@ -91,9 +91,9 @@ motors:
     enabled: true
   - id: 8
     name: mid_right_shoulder
-    center: 300
-    min: 100
-    max: 560
+    center: 320
+    min: 120
+    max: 580
     invert: false
     enabled: true
   - id: 9
@@ -106,9 +106,9 @@ motors:
   # Front-right: HAT ports 10/11 had shoulder/knee plugs reversed — see meta.channel_swaps.
   - id: 10
     name: front_right_shoulder
-    center: 300
-    min: 100
-    max: 560
+    center: 280
+    min: 80
+    max: 540
     invert: false
     enabled: true
   - id: 11
