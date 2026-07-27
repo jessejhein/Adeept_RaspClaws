@@ -139,11 +139,18 @@ def register_routes(app) -> None:
 			return jsonify({"ok": False, "error": str(e)}), 500
 
 		leds_cfg = cfg.get("leds") or {}
-		led_count = int(leds_cfg.get("count", 10))
+		led_count = int(leds_cfg.get("count", 12))
+		pixel_meta = {int(p["id"]): p for p in (leds_cfg.get("pixels") or []) if "id" in p}
 		led_states = []
 		for i in range(led_count):
 			st = _state["led_state"].get(i, {"on": False, "r": 0, "g": 0, "b": 0})
-			led_states.append({"id": i, **st})
+			meta_p = pixel_meta.get(i, {})
+			led_states.append({
+				"id": i,
+				"name": meta_p.get("name", "led_%d" % i),
+				"group": meta_p.get("group", "unknown"),
+				**st,
+			})
 
 		try:
 			motors = _motor_status_list()

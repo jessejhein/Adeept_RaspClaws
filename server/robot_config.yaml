@@ -12,9 +12,39 @@ meta:
   channel_swaps:
     - [10, 11]
 leds:
-  count: 10
+  # WS281x data on Robot HAT (BCM pin). Requires PWM free — onboard audio
+  # must stay off: dtparam=audio=off in /boot/firmware/config.txt
+  count: 12
   pin_bcm: 12
-  brightness: 128
+  brightness: 255
+  # Color order on each multi-emitter pixel (physical, looking at the face):
+  #   R / G / B / W arranged Right → Left (subtle, like subpixels on an LCD).
+  # Library still uses RGB channel args; W is a separate emitter on RGBW packs.
+  color_order: RGBW_RL
+  # Physical map (wiring / faceplate layout). Indices are strip order 0..count-1.
+  # Front face panel (6): outside front of the robot
+  #   0 front bottom left    3 front bottom right
+  #   1 front mid left       4 front mid right
+  #   2 front upper left     5 front upper right
+  # Front interior (3): facing into the body cavity, Left → Right
+  #   6 front_in_left   7 front_in_mid   8 front_in_right
+  # Back interior (3): inside rear cavity; direction not fully verified —
+  #   assume same Left → Right as front interior.
+  #   9 back_in_left   10 back_in_mid   11 back_in_right
+  pixels:
+    - { id: 0, name: front_bottom_left, group: front_panel }
+    - { id: 1, name: front_mid_left, group: front_panel }
+    - { id: 2, name: front_upper_left, group: front_panel }
+    - { id: 3, name: front_bottom_right, group: front_panel }
+    - { id: 4, name: front_mid_right, group: front_panel }
+    - { id: 5, name: front_upper_right, group: front_panel }
+    - { id: 6, name: front_in_left, group: front_interior }
+    - { id: 7, name: front_in_mid, group: front_interior }
+    - { id: 8, name: front_in_right, group: front_interior }
+    - { id: 9, name: back_in_left, group: back_interior }
+    - { id: 10, name: back_in_mid, group: back_interior }
+    - { id: 11, name: back_in_right, group: back_interior }
+
 camera:
   pan_channel: 12
   tilt_channel: 13

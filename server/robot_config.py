@@ -94,9 +94,15 @@ def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
 	meta.setdefault("channel_swaps", [])
 
 	leds = data.setdefault("leds", {})
-	leds.setdefault("count", 10)
+	leds.setdefault("count", 12)
 	leds.setdefault("pin_bcm", 12)
-	leds.setdefault("brightness", 128)
+	leds.setdefault("brightness", 255)
+	leds.setdefault("color_order", "RGBW_RL")
+	# Optional named map; used by assembly UI / docs (see robot_config.yaml comments)
+	if not leds.get("pixels"):
+		leds["pixels"] = [
+			{"id": i, "name": "led_%d" % i, "group": "unknown"} for i in range(int(leds["count"]))
+		]
 
 	camera = data.setdefault("camera", {})
 	camera.setdefault("pan_channel", 12)

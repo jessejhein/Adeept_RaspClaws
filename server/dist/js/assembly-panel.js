@@ -82,11 +82,13 @@
     var states = (leds && leds.states) || [];
     var html = "";
     for (var i = 0; i < count; i++) {
-      var st = states[i] || { on: false, r: 0, g: 0, b: 0 };
+      var st = states[i] || { on: false, r: 0, g: 0, b: 0, name: "led_" + i, group: "" };
       var bg = st.on ? ("rgb(" + st.r + "," + st.g + "," + st.b + ")") : "#222";
+      var label = (st.name ? st.name : ("LED " + i));
+      var group = st.group ? (" · " + st.group) : "";
       html += "<div class=\"led-cell\" data-id=\"" + i + "\">" +
         "<div class=\"led-swatch\" style=\"background:" + bg + "\"></div>" +
-        "<div class=\"led-label\">LED " + i + "</div>" +
+        "<div class=\"led-label\" title=\"#" + i + group + "\">#" + i + " " + escapeHtml(label) + "</div>" +
         "<div class=\"led-btns\">" +
           "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#ff0000\">R</button>" +
           "<button type=\"button\" data-led=\"" + i + "\" data-color=\"#00ff00\">G</button>" +
