@@ -50,17 +50,23 @@
     (motors || []).forEach(function (m) {
       if (!m.enabled) return;
       var lim = (m.min == null ? "—" : m.min) + " / " + (m.max == null ? "—" : m.max);
+      var ch = (m.channel != null ? m.channel : m.id);
+      var chNote = (ch !== m.id) ? (m.id + "→" + ch) : String(m.id);
       html += "<tr data-id=\"" + m.id + "\">" +
         "<td class=\"name\">" + escapeHtml(m.name) + "</td>" +
-        "<td>" + m.id + "</td>" +
+        "<td title=\"logical id → physical HAT port\">" + chNote + "</td>" +
         "<td>" + escapeHtml(jointLabel(m.joint)) + "</td>" +
         "<td class=\"center\">" + m.center + "</td>" +
         "<td class=\"current\">" + m.current + "</td>" +
         "<td class=\"deg\">" + m.degrees_from_center + "°</td>" +
         "<td class=\"lim\">" + lim + "</td>" +
         "<td class=\"actions\">" +
+          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"-5\">−5</button>" +
+          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"-1\">−1</button>" +
+          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"1\">+1</button>" +
+          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"5\">+5</button> " +
           "<button type=\"button\" class=\"btn-test\" data-id=\"" + m.id + "\">Test</button> " +
-          "<button type=\"button\" class=\"btn-center\" data-id=\"" + m.id + "\">Set center</button>" +
+          "<button type=\"button\" class=\"btn-center\" data-id=\"" + m.id + "\" title=\"Set center to current position\">Set center</button>" +
         "</td>" +
         "</tr>";
     });
@@ -192,7 +198,7 @@
         "<h4>Motors</h4>" +
         "<table class=\"assembly-table\">" +
           "<thead><tr>" +
-            "<th>Name</th><th>Port</th><th>Joint</th><th>Center</th><th>Current</th><th>Est. °</th><th>Min/Max</th><th></th>" +
+            "<th>Name</th><th>Port</th><th>Joint</th><th>Center</th><th>Current</th><th>Est. °</th><th>Min/Max</th><th>Nudge / Test</th>" +
           "</tr></thead>" +
           "<tbody id=\"assembly-motor-body\"></tbody>" +
         "</table>" +
@@ -250,6 +256,18 @@
     panel.addEventListener("click", function (ev) {
       var t = ev.target;
       if (!t || !t.getAttribute) return;
+
+      if (t.classList.contains("btn-nudge")) {
+        var nid = t.getAttribute("data-id");
+        var delta = parseInt(t.getAttribute("data-delta"), 10);
+        runAction("Nudge " + nid + " " + (delta > 0 ? "+" : "") + delta, function () {
+          return api("/api/assembly/motors/" + nid + "/nudge", {
+            method: "POST",
+            body: JSON.stringify({ delta: delta })
+          });
+        });
+        return;
+      }
 
       if (t.classList.contains("btn-test")) {
         var id = t.getAttribute("data-id");

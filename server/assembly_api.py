@@ -101,7 +101,8 @@ def _motor_status_list():
 		rows.append({
 			"id": i,
 			"name": m["name"],
-			"joint": robot_config.joint_role(i),
+			"joint": robot_config.joint_role(i, m),
+			"channel": int(m.get("channel", i)),
 			"center": center,
 			"current": current,
 			"min": m.get("min"),
@@ -213,10 +214,36 @@ def register_routes(app) -> None:
 
 		center = robot_config.clamp_pwm(center, motor, cfg["meta"])
 		_dual_write_center(motor_id, center)
-		move = bool(payload.get("move", False))
+		# Default move to new center so "set center" and nudges are visible
+		move = bool(payload.get("move", True))
 		if move:
 			sc.setPWM(motor_id, center)
 		return jsonify({"ok": True, "id": motor_id, "center": center})
+
+	@app.route("/api/assembly/motors/<int:motor_id>/nudge", methods=["POST"])
+	def assembly_motor_nudge(motor_id: int):
+		"""Adjust center by delta PWM ticks (+/-1, +/-5, etc.) and move there."""
+		sc = _sc()
+		cfg = robot_config.get_config()
+		motor = robot_config.motor_by_id(motor_id, cfg)
+		if motor is None:
+			return jsonify({"ok": False, "error": "unknown motor"}), 404
+		if not motor.get("enabled", True):
+			return jsonify({"ok": False, "error": "motor disabled"}), 400
+
+		payload = request.get_json(silent=True) or {}
+		delta = int(payload.get("delta", 0))
+		if delta == 0:
+			return jsonify({"ok": False, "error": "delta required"}), 400
+		# Safety cap
+		if abs(delta) > 50:
+			return jsonify({"ok": False, "error": "delta too large (max 50)"}), 400
+
+		center = int(motor["center"]) + delta
+		center = robot_config.clamp_pwm(center, motor, cfg["meta"])
+		_dual_write_center(motor_id, center)
+		sc.setPWM(motor_id, center)
+		return jsonify({"ok": True, "id": motor_id, "center": center, "delta": delta})
 
 	@app.route("/api/assembly/home", methods=["POST"])
 	def assembly_home():

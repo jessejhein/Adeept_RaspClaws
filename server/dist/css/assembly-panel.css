@@ -135,6 +135,16 @@
   white-space: nowrap;
 }
 
+.assembly-table td.actions button {
+  margin: 1px;
+  min-width: 2em;
+}
+
+.assembly-table td.actions .btn-nudge {
+  font-variant-numeric: tabular-nums;
+  padding: 3px 5px;
+}
+
 .assembly-led-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));

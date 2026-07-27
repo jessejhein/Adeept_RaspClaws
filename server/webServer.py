@@ -40,6 +40,13 @@ except Exception as _cfg_err:
 	print('robot_config load failed, using RPIservo defaults:', _cfg_err)
 	ROBOT_CFG = None
 
+# Remap PCA9685 channels for wiring mistakes (e.g. shoulder/knee plugs swapped)
+if ROBOT_CFG is not None:
+	try:
+		robot_config.install_pwm_channel_patch(RPIservo.pwm, getattr(move, 'pwm', None))
+	except Exception as _patch_err:
+		print('pwm channel patch failed:', _patch_err)
+
 scGear = RPIservo.ServoCtrl()
 if ROBOT_CFG is not None:
 	robot_config.apply_to_servo_ctrl(scGear, ROBOT_CFG)

@@ -10,6 +10,10 @@ meta:
   angle_range_deg: 180
   ctrl_range_min: 100
   ctrl_range_max: 560
+  # Swap logical software channels that were plugged into each other's HAT ports.
+  # Example: front-right shoulder/knee connectors reversed on the HAT.
+  channel_swaps:
+    - [10, 11]
 
 leds:
   # Physical WS281x count on this build
@@ -99,6 +103,7 @@ motors:
     max: 560
     invert: false
     enabled: true
+  # Front-right: HAT ports 10/11 had shoulder/knee plugs reversed — see meta.channel_swaps.
   - id: 10
     name: front_right_shoulder
     center: 300

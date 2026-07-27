@@ -20,9 +20,14 @@ _OPEN_MAX = 4095
 _lock = threading.RLock()
 _config: Optional[Dict[str, Any]] = None
 _config_path: Optional[str] = None
+# logical software channel -> physical PCA9685 channel (identity if no remap)
+_channel_map: Dict[int, int] = {i: i for i in range(16)}
+_pwm_patched = False
 
 # Physical joint role from channel id (legs only)
-def joint_role(motor_id: int) -> str:
+def joint_role(motor_id: int, motor: Optional[Dict[str, Any]] = None) -> str:
+	if motor and motor.get("joint"):
+		return str(motor["joint"])
 	if motor_id < 0 or motor_id > 15:
 		return "unknown"
 	if motor_id >= 14:
@@ -32,6 +37,17 @@ def joint_role(motor_id: int) -> str:
 	if motor_id == 13:
 		return "tilt"
 	return "shoulder" if (motor_id % 2 == 0) else "knee"
+
+
+def resolve_channel(logical: int) -> int:
+	"""Map software/logical channel to physical PCA9685 channel."""
+	with _lock:
+		return int(_channel_map.get(int(logical), int(logical)))
+
+
+def channel_map() -> Dict[int, int]:
+	with _lock:
+		return dict(_channel_map)
 
 
 def default_config_path() -> str:
@@ -74,6 +90,8 @@ def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
 	meta.setdefault("angle_range_deg", 180)
 	meta.setdefault("ctrl_range_min", 100)
 	meta.setdefault("ctrl_range_max", 560)
+	# Optional pairs of logical channels to swap (e.g. shoulder/knee plugs reversed)
+	meta.setdefault("channel_swaps", [])
 
 	leds = data.setdefault("leds", {})
 	leds.setdefault("count", 10)
@@ -86,8 +104,8 @@ def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
 	camera.setdefault("invert_pan", False)
 	camera.setdefault("invert_tilt", False)
 
-	motors = data.get("motors") or []
-	by_id = {int(m["id"]): m for m in motors if "id" in m}
+	raw_motors = data.get("motors") or []
+	by_id = {int(m["id"]): m for m in raw_motors if "id" in m}
 	default_names = {
 		0: "front_left_shoulder", 1: "front_left_knee",
 		2: "mid_left_shoulder", 3: "mid_left_knee",
@@ -103,17 +121,77 @@ def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
 		m = by_id.get(i, {})
 		min_v = m.get("min", 100 if i < 14 else None)
 		max_v = m.get("max", 560 if i < 14 else None)
-		normalized.append({
+		# channel: physical PCA9685 port. If omitted, id is used (then channel_swaps apply).
+		channel_explicit = "channel" in m and m.get("channel") is not None
+		ch = int(m["channel"]) if channel_explicit else i
+		entry = {
 			"id": i,
+			"channel": ch,
+			"channel_explicit": channel_explicit,
 			"name": m.get("name", default_names.get(i, "motor_%d" % i)),
 			"center": int(m.get("center", 300)),
 			"min": min_v,
 			"max": max_v,
 			"invert": bool(m.get("invert", False)),
 			"enabled": bool(m.get("enabled", i < 14)),
-		})
+		}
+		if m.get("joint"):
+			entry["joint"] = str(m["joint"])
+		normalized.append(entry)
 	data["motors"] = normalized
+	_rebuild_channel_map(data)
 	return data
+
+
+def _rebuild_channel_map(data: Dict[str, Any]) -> None:
+	"""Build logical->physical map: channel_swaps first, then explicit motor.channel."""
+	global _channel_map
+	cmap = {i: i for i in range(16)}
+	for pair in data.get("meta", {}).get("channel_swaps") or []:
+		if not pair or len(pair) < 2:
+			continue
+		a, b = int(pair[0]), int(pair[1])
+		if 0 <= a <= 15 and 0 <= b <= 15:
+			cmap[a], cmap[b] = cmap[b], cmap[a]
+	for m in data.get("motors") or []:
+		if m.get("channel_explicit"):
+			logical = int(m["id"])
+			physical = int(m["channel"])
+			if 0 <= logical <= 15 and 0 <= physical <= 15:
+				cmap[logical] = physical
+	# Reflect resolved physical channel back onto motor entries for UI
+	for m in data.get("motors") or []:
+		m["channel"] = cmap.get(int(m["id"]), int(m["id"]))
+	with _lock:
+		_channel_map = cmap
+
+
+def install_pwm_channel_patch(*pwm_controllers) -> None:
+	"""Wrap PCA9685 set_pwm so logical channel indices hit remapped physical ports.
+
+	Call once after load_config with RPIservo.pwm, move.pwm, etc.
+	"""
+	global _pwm_patched
+	if _pwm_patched:
+		return
+
+	def _wrap(pwm_obj):
+		if pwm_obj is None or getattr(pwm_obj, "_channel_map_wrapped", False):
+			return
+		orig = pwm_obj.set_pwm
+
+		def set_pwm_mapped(channel, on, off):
+			return orig(resolve_channel(channel), on, off)
+
+		pwm_obj.set_pwm = set_pwm_mapped  # type: ignore[method-assign]
+		pwm_obj._channel_map_wrapped = True
+
+	for pwm in pwm_controllers:
+		try:
+			_wrap(pwm)
+		except Exception as e:
+			print("pwm channel patch failed:", e)
+	_pwm_patched = True
 
 
 def effective_min(motor: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> int:
@@ -231,7 +309,14 @@ def save_config(cfg: Optional[Dict[str, Any]] = None, path: Optional[str] = None
 
 	cfg = cfg or get_config()
 	path = path or config_path()
-	body = yaml.safe_dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
+	# Drop internal-only fields before dump
+	to_dump = copy.deepcopy(cfg)
+	for m in to_dump.get("motors") or []:
+		m.pop("channel_explicit", None)
+		# Keep channel only if remapped from id (or always keep for clarity)
+		if int(m.get("channel", m["id"])) == int(m["id"]):
+			m.pop("channel", None)
+	body = yaml.safe_dump(to_dump, default_flow_style=False, sort_keys=False, allow_unicode=True)
 	header = (
 		"# RaspClaws robot configuration (auto-saved).\n"
 		"# min/max: integer stop, or null for no software stop.\n"
