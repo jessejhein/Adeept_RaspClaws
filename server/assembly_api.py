@@ -125,19 +125,93 @@ def _motor_status_list():
 
 
 def _read_throttled() -> Dict[str, Any]:
-	out = {"raw": None, "currently_undervolt": False, "currently_throttled": False, "history_undervolt": False}
+	out = {
+		"raw": None,
+		"currently_undervolt": False,
+		"currently_throttled": False,
+		"history_undervolt": False,
+		"history_throttled": False,
+	}
 	try:
 		text = subprocess.check_output(["vcgencmd", "get_throttled"], text=True, timeout=2).strip()
-		# throttled=0x50000
 		raw = text.split("=")[-1].strip()
 		val = int(raw, 0)
 		out["raw"] = raw
 		out["currently_undervolt"] = bool(val & 0x1)
 		out["currently_throttled"] = bool(val & 0x4)
 		out["history_undervolt"] = bool(val & 0x10000)
+		out["history_throttled"] = bool(val & 0x40000)
 	except Exception as e:
 		out["error"] = str(e)
 	return out
+
+
+def _vcgencmd_volts(rail: str = "") -> Optional[float]:
+	try:
+		cmd = ["vcgencmd", "measure_volts"]
+		if rail:
+			cmd.append(rail)
+		text = subprocess.check_output(cmd, text=True, timeout=2).strip()
+		# volt=1.2000V
+		part = text.split("=")[-1].strip().rstrip("Vv")
+		return float(part)
+	except Exception:
+		return None
+
+
+def _read_system_health() -> Dict[str, Any]:
+	"""CPU temp/use, RAM, core voltage, undervolt flags — for assembly health strip."""
+	health: Dict[str, Any] = {"throttled": _read_throttled()}
+	# Core supply (not battery pack, but undervolt is what causes reboots under servo load)
+	vcore = _vcgencmd_volts() or _vcgencmd_volts("core")
+	health["voltage_core_v"] = vcore
+	health["voltage_note"] = (
+		"SoC core rail from vcgencmd (not pack voltage). "
+		"UNDERVOLT flags mean the 5V input sagged under load."
+	)
+	try:
+		with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+			health["cpu_temp_c"] = round(float(f.read().strip()) / 1000.0, 1)
+	except Exception:
+		try:
+			import info
+			health["cpu_temp_c"] = float(info.get_cpu_tempfunc())
+		except Exception as e:
+			health["cpu_temp_error"] = str(e)
+	try:
+		import psutil
+		health["cpu_percent"] = float(psutil.cpu_percent(interval=0.05))
+		vm = psutil.virtual_memory()
+		health["ram_percent"] = float(vm.percent)
+		health["ram_available_mb"] = round(vm.available / (1024 * 1024), 1)
+		health["ram_total_mb"] = round(vm.total / (1024 * 1024), 1)
+	except Exception as e:
+		health["psutil_error"] = str(e)
+	return health
+
+
+def perceptual_brightness_step(pwm: int, direction: int, n_steps: int = 28) -> int:
+	"""One roughly equal *perceived* brightness step; returns 8-bit PWM 0–255.
+
+	Human brightness perception is compressive (Weber–Fechner / power law): a ΔPWM
+	of 1 is far more noticeable near 30 than near 255. We step in a gamma-ish
+	perceptual domain (gamma≈2.2, same idea as sRGB), then map back to linear PWM
+	for the WS281x duty value. The readout stays the raw PWM integer.
+	"""
+	if direction == 0:
+		return max(0, min(255, int(pwm)))
+	gamma = 2.2
+	direction = 1 if direction > 0 else -1
+	x = max(0.0, min(1.0, float(pwm) / 255.0))
+	# L in ~perceptual space
+	L = x ** (1.0 / gamma)
+	L = max(0.0, min(1.0, L + direction * (1.0 / float(n_steps))))
+	x2 = L ** gamma
+	new = int(round(x2 * 255.0))
+	# Always move at least 1 PWM tick when possible so buttons never feel dead
+	if new == int(pwm):
+		new = int(pwm) + direction
+	return max(0, min(255, new))
 
 
 def register_routes(app) -> None:
@@ -195,12 +269,13 @@ def register_routes(app) -> None:
 			"camera": cfg.get("camera") or {},
 			"meta": cfg.get("meta") or {},
 			"config_path": robot_config.config_path(),
-			"throttled": _read_throttled(),
+			"health": _read_system_health(),
+			"throttled": _read_throttled(),  # keep for older UI bits
 		})
 
 	@app.route("/api/assembly/health", methods=["GET"])
 	def assembly_health():
-		return jsonify({"ok": True, "throttled": _read_throttled()})
+		return jsonify({"ok": True, **_read_system_health()})
 
 	@app.route("/api/assembly/config", methods=["GET"])
 	def assembly_config_get():
@@ -711,11 +786,20 @@ def register_routes(app) -> None:
 		payload = request.get_json(silent=True) or {}
 		st = _ensure_led_state(led_id)
 		if "delta" in payload:
+			# Linear PWM ticks (legacy). Prefer perceptual_steps from the panel.
 			br = int(st.get("brightness", 255)) + int(payload["delta"])
+		elif "perceptual_steps" in payload or payload.get("perceptual"):
+			steps = int(payload.get("perceptual_steps", 1))
+			if steps == 0:
+				steps = 1 if payload.get("perceptual") else 0
+			direction = 1 if steps > 0 else -1
+			br = int(st.get("brightness", 255))
+			for _ in range(abs(steps)):
+				br = perceptual_brightness_step(br, direction)
 		elif "brightness" in payload:
 			br = int(payload["brightness"])
 		else:
-			return jsonify({"ok": False, "error": "brightness or delta required"}), 400
+			return jsonify({"ok": False, "error": "brightness, delta, or perceptual_steps required"}), 400
 		br = max(0, min(255, br))
 		st["brightness"] = br
 		# If off and nudging up, turn on white so the change is visible

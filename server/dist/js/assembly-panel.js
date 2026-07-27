@@ -130,11 +130,15 @@
             "<button type=\"button\" data-led=\"" + i + "\" data-state=\"off\">Off</button>" +
           "</div>" +
           "<div class=\"led-bright\">" +
-            "<button type=\"button\" class=\"btn-br\" data-led=\"" + i + "\" data-delta=\"-10\">−</button>" +
+            "<button type=\"button\" class=\"btn-br\" data-led=\"" + i +
+              "\" data-delta=\"-1\" title=\"One perceptual step down\">−</button>" +
             "<input type=\"range\" class=\"led-slider\" data-led=\"" + i +
-              "\" min=\"0\" max=\"255\" value=\"" + br + "\" />" +
-            "<button type=\"button\" class=\"btn-br\" data-led=\"" + i + "\" data-delta=\"10\">+</button>" +
-            "<span class=\"led-br-val\" data-led=\"" + i + "\">" + br + "</span>" +
+              "\" min=\"0\" max=\"255\" value=\"" + br +
+              "\" title=\"Linear PWM 0–255 (display value)\" />" +
+            "<button type=\"button\" class=\"btn-br\" data-led=\"" + i +
+              "\" data-delta=\"1\" title=\"One perceptual step up\">+</button>" +
+            "<span class=\"led-br-val\" data-led=\"" + i +
+              "\" title=\"Actual PWM / duty 0–255\">" + br + "</span>" +
           "</div></div>";
       }
       grid.innerHTML = html;
@@ -165,18 +169,39 @@
     }
   }
 
-  function renderHealth(th) {
+  function renderHealth(h) {
     var el = $("#assembly-health");
-    if (!el || !th) return;
-    var bits = [];
-    if (th.raw != null) bits.push("throttled=" + th.raw);
-    if (th.currently_undervolt) bits.push("UNDERVOLT NOW");
-    if (th.currently_throttled) bits.push("THROTTLED NOW");
-    if (th.history_undervolt && !th.currently_undervolt) bits.push("undervolt earlier this boot");
-    if (!bits.length) bits.push("power OK");
-    el.textContent = bits.join(" · ");
-    el.className = "assembly-health" +
-      ((th.currently_undervolt || th.currently_throttled) ? " bad" : "");
+    if (!el || !h) return;
+    var th = h.throttled || h;
+    var bad = !!(th.currently_undervolt || th.currently_throttled);
+
+    var volt = (h.voltage_core_v != null) ? (Number(h.voltage_core_v).toFixed(3) + " V core") : "Vcore ?";
+    var temp = (h.cpu_temp_c != null) ? (h.cpu_temp_c + "°C") : "temp ?";
+    var cpu = (h.cpu_percent != null) ? (Number(h.cpu_percent).toFixed(0) + "% CPU") : "CPU ?";
+    var ram = (h.ram_percent != null)
+      ? (Number(h.ram_percent).toFixed(0) + "% RAM" +
+        (h.ram_available_mb != null ? (" (" + h.ram_available_mb + " MB free)") : ""))
+      : "RAM ?";
+
+    var powerBits = [];
+    if (th.raw != null) powerBits.push("throttled=" + th.raw);
+    if (th.currently_undervolt) powerBits.push("UNDERVOLT NOW");
+    if (th.currently_throttled) powerBits.push("THROTTLED NOW");
+    if (th.history_undervolt && !th.currently_undervolt) powerBits.push("undervolt earlier");
+    if (!powerBits.length) powerBits.push("power OK");
+
+    el.innerHTML =
+      "<div class=\"health-row\">" +
+        "<span class=\"health-chip" + (bad ? " bad" : "") + "\">" + escapeHtml(volt) + "</span>" +
+        "<span class=\"health-chip\">" + escapeHtml(temp) + "</span>" +
+        "<span class=\"health-chip\">" + escapeHtml(cpu) + "</span>" +
+        "<span class=\"health-chip\">" + escapeHtml(ram) + "</span>" +
+      "</div>" +
+      "<div class=\"health-row health-power" + (bad ? " bad" : "") + "\">" +
+        escapeHtml(powerBits.join(" · ")) +
+      "</div>";
+    el.className = "assembly-health" + (bad ? " bad" : "");
+    el.title = h.voltage_note || "SoC core voltage + undervolt flags (pack voltage not measured here)";
   }
 
   function escapeHtml(s) {
@@ -215,7 +240,8 @@
         });
       }
       renderLeds(st.leds);
-      if (st.throttled) renderHealth(st.throttled);
+      if (st.health) renderHealth(st.health);
+      else if (st.throttled) renderHealth({ throttled: st.throttled });
       setStatus("Updated " + new Date().toLocaleTimeString());
     } catch (e) {
       setStatus(String(e), true);
@@ -394,11 +420,12 @@
 
       if (t.classList.contains("btn-br")) {
         var bled = t.getAttribute("data-led");
-        var bdelta = parseInt(t.getAttribute("data-delta"), 10);
-        runAction("Brightness " + bled + " " + (bdelta > 0 ? "+" : "") + bdelta, function () {
+        // data-delta is +1 / -1 perceptual steps (not raw PWM ticks)
+        var bsteps = parseInt(t.getAttribute("data-delta"), 10);
+        runAction("Brightness " + bled + " perc " + (bsteps > 0 ? "+" : "") + bsteps, function () {
           return api("/api/assembly/leds/" + bled + "/brightness", {
             method: "POST",
-            body: JSON.stringify({ delta: bdelta })
+            body: JSON.stringify({ perceptual_steps: bsteps })
           });
         });
         return;

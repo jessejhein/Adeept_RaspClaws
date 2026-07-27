@@ -8,7 +8,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/ui-polish.css"
   },
   {
-    "revision": "assembly-panel-css-20260727e",
+    "revision": "assembly-panel-css-20260727f",
     "url": "/css/assembly-panel.css"
   },
   {
@@ -148,7 +148,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/js/ui-text-polish.js"
   },
   {
-    "revision": "assembly-panel-js-20260727e",
+    "revision": "assembly-panel-js-20260727f",
     "url": "/js/assembly-panel.js"
   },
   {
