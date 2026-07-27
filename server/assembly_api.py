@@ -159,9 +159,13 @@ def _vcgencmd_volts(rail: str = "") -> Optional[float]:
 		return None
 
 
-def _read_system_health() -> Dict[str, Any]:
-	"""CPU temp/use, RAM, core voltage, undervolt flags — for assembly health strip."""
-	health: Dict[str, Any] = {"throttled": _read_throttled()}
+def _read_system_health(light: bool = False) -> Dict[str, Any]:
+	"""CPU temp/use, RAM, core voltage, undervolt flags.
+
+	light=True: skip blocking samples (for always-on Hardware chips / video path).
+	Uses non-blocking psutil and cheap /proc + vcgencmd only.
+	"""
+	health: Dict[str, Any] = {"throttled": _read_throttled(), "light": light}
 	# Core supply (not battery pack, but undervolt is what causes reboots under servo load)
 	vcore = _vcgencmd_volts() or _vcgencmd_volts("core")
 	health["voltage_core_v"] = vcore
@@ -180,13 +184,30 @@ def _read_system_health() -> Dict[str, Any]:
 			health["cpu_temp_error"] = str(e)
 	try:
 		import psutil
-		health["cpu_percent"] = float(psutil.cpu_percent(interval=0.05))
+		# interval=None is non-blocking (compares to last call); interval=0.05 sleeps
+		interval = None if light else 0.05
+		health["cpu_percent"] = float(psutil.cpu_percent(interval=interval))
 		vm = psutil.virtual_memory()
 		health["ram_percent"] = float(vm.percent)
 		health["ram_available_mb"] = round(vm.available / (1024 * 1024), 1)
 		health["ram_total_mb"] = round(vm.total / (1024 * 1024), 1)
 	except Exception as e:
-		health["psutil_error"] = str(e)
+		# /proc fallback if psutil missing
+		try:
+			with open("/proc/meminfo") as f:
+				info_map = {}
+				for line in f:
+					parts = line.split()
+					if len(parts) >= 2:
+						info_map[parts[0].rstrip(":")] = int(parts[1])
+			total = info_map.get("MemTotal", 0)
+			avail = info_map.get("MemAvailable", info_map.get("MemFree", 0))
+			if total:
+				health["ram_percent"] = round(100.0 * (1.0 - avail / total), 1)
+				health["ram_available_mb"] = round(avail / 1024.0, 1)
+				health["ram_total_mb"] = round(total / 1024.0, 1)
+		except Exception:
+			health["psutil_error"] = str(e)
 	return health
 
 
@@ -275,7 +296,9 @@ def register_routes(app) -> None:
 
 	@app.route("/api/assembly/health", methods=["GET"])
 	def assembly_health():
-		return jsonify({"ok": True, **_read_system_health()})
+		# ?light=1 — non-blocking sample for always-on Hardware UI (avoids video stutter)
+		light = str(request.args.get("light", "0")).lower() in ("1", "true", "yes")
+		return jsonify({"ok": True, **_read_system_health(light=light)})
 
 	@app.route("/api/assembly/config", methods=["GET"])
 	def assembly_config_get():

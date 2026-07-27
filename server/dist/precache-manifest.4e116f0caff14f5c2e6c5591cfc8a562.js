@@ -152,6 +152,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/js/assembly-panel.js"
   },
   {
+    "revision": "hardware-health-js-20260727",
+    "url": "/js/hardware-health.js"
+  },
+  {
     "revision": "682fe012989b3f6c68fa",
     "url": "/js/chunk-vendors.6b42cb34.js"
   },
