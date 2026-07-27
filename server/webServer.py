@@ -23,6 +23,8 @@ import websockets
 
 import json
 import app
+import assembly_api
+import robot_config
 
 OLED_connection = 0
 
@@ -31,13 +33,27 @@ speed_set = 100
 rad = 0.5
 turnWiggle = 60
 
+# Load YAML centers/limits before first moveInit when possible
+try:
+	ROBOT_CFG = robot_config.load_config()
+except Exception as _cfg_err:
+	print('robot_config load failed, using RPIservo defaults:', _cfg_err)
+	ROBOT_CFG = None
+
 scGear = RPIservo.ServoCtrl()
+if ROBOT_CFG is not None:
+	robot_config.apply_to_servo_ctrl(scGear, ROBOT_CFG)
+	# move.py captured centers at import; refresh module globals for gait bases
+	for _i in range(16):
+		setattr(move, 'pwm%d' % _i, scGear.initPos[_i])
 scGear.moveInit()
 
 P_sc = RPIservo.ServoCtrl()
-P_sc.start()
-
 T_sc = RPIservo.ServoCtrl()
+if ROBOT_CFG is not None:
+	robot_config.apply_to_servo_ctrl(P_sc, ROBOT_CFG)
+	robot_config.apply_to_servo_ctrl(T_sc, ROBOT_CFG)
+P_sc.start()
 T_sc.start()
 
 
@@ -168,6 +184,7 @@ def robotCtrl(command_input, response):
 
 
 	elif 'lookleft' == command_input:
+		# LR pan confirmed correct — do not invert here
 		P_sc.singleServo(12, 1, 7)
 
 	elif 'lookright' == command_input:
@@ -178,10 +195,11 @@ def robotCtrl(command_input, response):
 
 
 	elif 'up' == command_input:
-		T_sc.singleServo(13, -1, 7)
+		# Corrected tilt direction; robot_config.camera invert_tilt is escape hatch
+		T_sc.singleServo(13, robot_config.camera_tilt_dir(True), 7)
 
 	elif 'down' == command_input:
-		T_sc.singleServo(13, 1, 7)
+		T_sc.singleServo(13, robot_config.camera_tilt_dir(False), 7)
 
 	elif 'UDstop' in command_input:
 		T_sc.stopWiggle()
@@ -201,6 +219,12 @@ def configPWM(command_input, response):
 	if 'PWMMS' in command_input:
 		numServo = int(command_input[6:])
 		replace_num("init_pwm%d = "%numServo, init_pwm[numServo])
+		# Dual-write YAML center
+		try:
+			robot_config.set_motor_center(numServo, init_pwm[numServo])
+			robot_config.save_config()
+		except Exception as e:
+			print('YAML center save failed:', e)
 
 	if 'PWMINIT' == command_input:
 		for i in range(0,16):
@@ -209,7 +233,13 @@ def configPWM(command_input, response):
 	if 'PWMD' == command_input:
 		for i in range(0,16):
 			init_pwm[i] = 300
-			replace_num("init_pwm%d = "%numServo, init_pwm[numServo])
+			replace_num("init_pwm%d = "%i, init_pwm[i])
+			scGear.initConfig(i, 300, 1)
+		try:
+			cfg = robot_config.sync_centers_from_list(list(init_pwm))
+			robot_config.save_config(cfg)
+		except Exception as e:
+			print('YAML PWMD save failed:', e)
 
 
 async def check_permit(websocket):
@@ -322,15 +352,30 @@ if __name__ == '__main__':
 
 	global flask_app
 	flask_app = app.webapp()
+	# Register assembly routes before Flask accepts traffic
+	assembly_api.register_routes(app.app)
+	assembly_api.bind_robot(sc=scGear, lights=None, init_pwm=init_pwm, replace_num=replace_num)
 	flask_app.startthread()
 
 	try:
-		RL=robotLight.RobotLight()
+		led_count = 16
+		led_pin = 12
+		led_bright = 255
+		if ROBOT_CFG is not None:
+			leds = ROBOT_CFG.get('leds') or {}
+			led_count = int(leds.get('count', 10))
+			led_pin = int(leds.get('pin_bcm', 12))
+			led_bright = int(leds.get('brightness', 128))
+		RL = robotLight.RobotLight(led_count=led_count, led_pin=led_pin, led_brightness=led_bright)
 		RL.start()
 		RL.breath(70,70,255)
-	except:
+	except Exception as e:
 		print('Use "sudo pip3 install rpi_ws281x" to install WS_281x package\n使用"sudo pip3 install rpi_ws281x"命令来安装rpi_ws281x')
-		pass
+		print(e)
+		RL = None
+
+	# Re-bind with lights once WS281x is up
+	assembly_api.bind_robot(sc=scGear, lights=RL, init_pwm=init_pwm, replace_num=replace_num)
 
 	while  1:
 		try:				  #Start server,waiting for client

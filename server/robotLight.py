@@ -12,11 +12,15 @@ import threading
 
 class RobotLight(threading.Thread):
 	def __init__(self, *args, **kwargs):
-		self.LED_COUNT	  	= 16	  # Number of LED pixels.
-		self.LED_PIN		= 12	  # GPIO pin connected to the pixels (18 uses PWM!).
+		led_count = int(kwargs.pop('led_count', 16))
+		led_pin = int(kwargs.pop('led_pin', 12))
+		led_brightness = int(kwargs.pop('led_brightness', 255))
+
+		self.LED_COUNT	  	= led_count	  # Number of LED pixels.
+		self.LED_PIN		= led_pin	  # GPIO pin connected to the pixels (18 uses PWM!).
 		self.LED_FREQ_HZ	= 800000  # LED signal frequency in hertz (usually 800khz)
 		self.LED_DMA		= 10	  # DMA channel to use for generating signal (try 10)
-		self.LED_BRIGHTNESS = 255	 # Set to 0 for darkest and 255 for brightest
+		self.LED_BRIGHTNESS = led_brightness	 # Set to 0 for darkest and 255 for brightest
 		self.LED_INVERT	 = False   # True to invert the signal (when using NPN transistor level shift)
 		self.LED_CHANNEL	= 0	   # set to '1' for GPIOs 13, 19, 41, 45 or 53
 

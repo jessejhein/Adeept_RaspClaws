@@ -8,6 +8,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/ui-polish.css"
   },
   {
+    "revision": "assembly-panel-css-20260727",
+    "url": "/css/assembly-panel.css"
+  },
+  {
     "revision": "682fe012989b3f6c68fa",
     "url": "/css/chunk-vendors.d6a48324.css"
   },
@@ -142,6 +146,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
   {
     "revision": "26d197f923dcb02e6d88ef09d7b02e4a",
     "url": "/js/ui-text-polish.js"
+  },
+  {
+    "revision": "assembly-panel-js-20260727",
+    "url": "/js/assembly-panel.js"
   },
   {
     "revision": "682fe012989b3f6c68fa",
