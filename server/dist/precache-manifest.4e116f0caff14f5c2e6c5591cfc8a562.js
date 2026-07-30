@@ -132,7 +132,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/img/bg.jpg"
   },
   {
-    "revision": "cb1433e057af8c632d845b0cd61e0d0c",
+    "revision": "566fa6b17f48c1843d79b912644470e2",
     "url": "/index.html"
   },
   {
@@ -141,7 +141,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
   },
   {
     "revision": "63793776015beeb1b9d4f47c99981f3c",
-    "url": "/js/camera-stream-fix.js"
+    "url": "/js/camera-stream-fix.js?v=stream-20260730"
   },
   {
     "revision": "26d197f923dcb02e6d88ef09d7b02e4a",

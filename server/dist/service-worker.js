@@ -14,10 +14,13 @@
 importScripts("https://storage.googleapis.com/workbox-cdn/releases/4.3.1/workbox-sw.js");
 
 importScripts(
-  "/precache-manifest.4e116f0caff14f5c2e6c5591cfc8a562.js?v=video-latency-20260729"
+  "/precache-manifest.4e116f0caff14f5c2e6c5591cfc8a562.js?v=stream-cache-20260730"
 );
 
 workbox.core.setCacheNameDetails({prefix: "adeept_bot_controller_web"});
+workbox.core.clientsClaim();
+
+self.addEventListener("install", () => self.skipWaiting());
 
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
