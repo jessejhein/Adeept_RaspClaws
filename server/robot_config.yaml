@@ -12,45 +12,56 @@ meta:
   channel_swaps:
     - [10, 11]
 leds:
-  # WS281x data on Robot HAT (BCM pin). Requires PWM free — onboard audio
-  # must stay off: dtparam=audio=off in /boot/firmware/config.txt
   count: 12
   pin_bcm: 12
   brightness: 255
-  # Color order on each multi-emitter pixel (physical, looking at the face):
-  #   R / G / B / W arranged Right → Left (subtle, like subpixels on an LCD).
-  # Library still uses RGB channel args; W is a separate emitter on RGBW packs.
   color_order: RGBW_RL
-  # Per-pixel software brightness (0–255) is runtime-only via Assembly panel;
-  # strip-level max is brightness: above. Patterns: front_chase, interior_scan, etc.
-  #
-  # Boot note (not implemented yet): LEDs init late in webServer.py — only after
-  # Flask/camera thread starts (~15–20s+). For early boot feedback, RobotLight
-  # would need to start before camera_opencv / app.webapp().
-  # Physical map (wiring / faceplate layout). Indices are strip order 0..count-1.
-  # Front face panel (6): outside front of the robot
-  #   0 front bottom left    3 front bottom right
-  #   1 front mid left       4 front mid right
-  #   2 front upper left     5 front upper right
-  # Front interior (3): facing into the body cavity, Left → Right
-  #   6 front_in_left   7 front_in_mid   8 front_in_right
-  # Back interior (3): inside rear cavity; direction not fully verified —
-  #   assume same Left → Right as front interior.
-  #   9 back_in_left   10 back_in_mid   11 back_in_right
+  patterns:
+    max_level: 200
+    perceptual_ramp: true
+    breath_step_delay_s: 0.08
+    breath_steps: 24
+    breath_color:
+      - 55
+      - 55
+      - 200
   pixels:
-    - { id: 0, name: front_bottom_left, group: front_panel }
-    - { id: 1, name: front_mid_left, group: front_panel }
-    - { id: 2, name: front_upper_left, group: front_panel }
-    - { id: 3, name: front_bottom_right, group: front_panel }
-    - { id: 4, name: front_mid_right, group: front_panel }
-    - { id: 5, name: front_upper_right, group: front_panel }
-    - { id: 6, name: front_in_left, group: front_interior }
-    - { id: 7, name: front_in_mid, group: front_interior }
-    - { id: 8, name: front_in_right, group: front_interior }
-    - { id: 9, name: back_in_left, group: back_interior }
-    - { id: 10, name: back_in_mid, group: back_interior }
-    - { id: 11, name: back_in_right, group: back_interior }
-
+    - id: 0
+      name: front_bottom_left
+      group: front_panel
+    - id: 1
+      name: front_mid_left
+      group: front_panel
+    - id: 2
+      name: front_upper_left
+      group: front_panel
+    - id: 3
+      name: front_bottom_right
+      group: front_panel
+    - id: 4
+      name: front_mid_right
+      group: front_panel
+    - id: 5
+      name: front_upper_right
+      group: front_panel
+    - id: 6
+      name: front_in_left
+      group: front_interior
+    - id: 7
+      name: front_in_mid
+      group: front_interior
+    - id: 8
+      name: front_in_right
+      group: front_interior
+    - id: 9
+      name: back_in_left
+      group: back_interior
+    - id: 10
+      name: back_in_mid
+      group: back_interior
+    - id: 11
+      name: back_in_right
+      group: back_interior
 camera:
   pan_channel: 12
   tilt_channel: 13
@@ -59,7 +70,7 @@ camera:
 motors:
   - id: 0
     name: front_left_shoulder
-    center: 280
+    center: 300
     min: 80
     max: 540
     invert: false
@@ -87,7 +98,7 @@ motors:
     enabled: true
   - id: 4
     name: rear_left_shoulder
-    center: 310
+    center: 300
     min: 110
     max: 570
     invert: false
@@ -101,7 +112,7 @@ motors:
     enabled: true
   - id: 6
     name: rear_right_shoulder
-    center: 305
+    center: 300
     min: 105
     max: 565
     invert: false
@@ -115,7 +126,7 @@ motors:
     enabled: true
   - id: 8
     name: mid_right_shoulder
-    center: 320
+    center: 300
     min: 120
     max: 580
     invert: false
@@ -130,7 +141,7 @@ motors:
   - id: 10
     channel: 11
     name: front_right_shoulder
-    center: 280
+    center: 300
     min: 80
     max: 540
     invert: false

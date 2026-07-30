@@ -618,50 +618,111 @@ def register_routes(app) -> None:
 		_set_pixels_raw(lights, colors)
 		time.sleep(seconds)
 
+	def _pat_settings():
+		try:
+			return robot_config.led_pattern_settings()
+		except Exception:
+			return {
+				"max_level": 200,
+				"perceptual_ramp": True,
+				"breath_step_delay_s": 0.08,
+				"breath_steps": 24,
+				"breath_color": (55, 55, 200),
+				"gamma": 2.2,
+			}
+
+	def _cap_rgb(r, g, b, max_level=None):
+		settings = _pat_settings()
+		ml = int(max_level if max_level is not None else settings["max_level"])
+		peak = max(int(r), int(g), int(b), 1)
+		if peak <= ml:
+			return (max(0, min(255, int(r))), max(0, min(255, int(g))), max(0, min(255, int(b))))
+		s = ml / float(peak)
+		return (int(round(int(r) * s)), int(round(int(g) * s)), int(round(int(b) * s)))
+
 	def _run_pattern_worker(name: str, lights) -> None:
 		try:
+			settings = _pat_settings()
+			max_level = settings["max_level"]
+			perceptual = settings["perceptual_ramp"]
+			gamma = settings.get("gamma", 2.2)
+			delay = settings["breath_step_delay_s"]
+			steps = settings["breath_steps"]
+			br, bg, bb = settings["breath_color"]
+
 			if name == "breath":
 				if hasattr(lights, "breath"):
-					lights.breath(70, 70, 255)
+					lights.breath(br, bg, bb)
 				return
 			if name == "breath_front":
-				# Manual breath on face only
+				# Manual breath on face only — same timing/ramp as config
 				while _state.get("pattern") == "breath_front":
-					for step in list(range(0, 11)) + list(range(10, -1, -1)):
+					for i in range(0, steps + 1):
 						if _state.get("pattern") != "breath_front":
 							return
-						k = step / 10.0
-						colors = {i: (int(70 * k), int(70 * k), int(255 * k)) for i in FRONT_PANEL}
+						t = i / float(steps)
+						level = robot_config.ramp_intensity(
+							t, max_level=max(br, bg, bb, 1), perceptual=perceptual, gamma=gamma
+						)
+						cr, cg, cb = robot_config.scale_color_to_level(br, bg, bb, level)
+						colors = {idx: (cr, cg, cb) for idx in FRONT_PANEL}
 						_set_pixels_raw(lights, colors)
-						time.sleep(0.04)
+						time.sleep(delay)
+					for i in range(0, steps + 1):
+						if _state.get("pattern") != "breath_front":
+							return
+						t = 1.0 - (i / float(steps))
+						level = robot_config.ramp_intensity(
+							t, max_level=max(br, bg, bb, 1), perceptual=perceptual, gamma=gamma
+						)
+						cr, cg, cb = robot_config.scale_color_to_level(br, bg, bb, level)
+						colors = {idx: (cr, cg, cb) for idx in FRONT_PANEL}
+						_set_pixels_raw(lights, colors)
+						time.sleep(delay)
 				return
 			if name == "front_chase":
+				chase = _cap_rgb(0, 180, 255)
 				while _state.get("pattern") == "front_chase":
 					for idx in FRONT_RING:
 						if _state.get("pattern") != "front_chase":
 							return
 						colors = {i: (0, 0, 0) for i in FRONT_PANEL}
-						colors[idx] = (0, 180, 255)
+						colors[idx] = chase
 						_set_pixels_raw(lights, colors)
 						time.sleep(0.12)
 				return
 			if name == "front_pulse":
 				while _state.get("pattern") == "front_pulse":
-					for step in list(range(0, 12)) + list(range(11, -1, -1)):
+					for i in range(0, steps + 1):
 						if _state.get("pattern") != "front_pulse":
 							return
-						k = step / 11.0
-						v = int(40 + 180 * k)
-						colors = {i: (v, v, v) for i in FRONT_PANEL}
+						t = i / float(steps)
+						v = robot_config.ramp_intensity(
+							t, max_level=max_level, perceptual=perceptual, gamma=gamma
+						)
+						# keep a small floor so face never goes fully black mid-cycle
+						v = max(8, v) if t > 0 else 0
+						colors = {idx: (v, v, v) for idx in FRONT_PANEL}
 						_set_pixels_raw(lights, colors)
-						time.sleep(0.04)
+						time.sleep(delay)
+					for i in range(0, steps + 1):
+						if _state.get("pattern") != "front_pulse":
+							return
+						t = 1.0 - (i / float(steps))
+						v = robot_config.ramp_intensity(
+							t, max_level=max_level, perceptual=perceptual, gamma=gamma
+						)
+						v = max(8, v) if t > 0 else 0
+						colors = {idx: (v, v, v) for idx in FRONT_PANEL}
+						_set_pixels_raw(lights, colors)
+						time.sleep(delay)
 				return
 			if name == "identify_groups":
 				# One-shot: each group gets a color; interiors get face confirmation after
 				seq = [
-					("front_panel", FRONT_PANEL, (0, 200, 80), None),
-					("front_interior", FRONT_IN, (0, 120, 255), (0, 120, 255)),
-					("back_interior", BACK_IN, (255, 80, 0), (255, 80, 0)),
+					("front_panel", FRONT_PANEL, _cap_rgb(0, 200, 80), None),
+					("front_interior", FRONT_IN, _cap_rgb(0, 120, 255), _cap_rgb(0, 120, 255)),
+					("back_interior", BACK_IN, _cap_rgb(255, 80, 0), _cap_rgb(255, 80, 0)),
 				]
 				for label, ids, color, confirm in seq:
 					if _state.get("pattern") != "identify_groups":
@@ -682,46 +743,53 @@ def register_routes(app) -> None:
 					for idx in FRONT_IN:
 						if _state.get("pattern") != "interior_scan":
 							return
+						hi = _cap_rgb(max_level, max_level, max_level)
+						cue = _cap_rgb(0, 80, 200)
 						colors = {i: (0, 0, 0) for i in range(_led_count())}
-						colors[idx] = (255, 255, 255)
+						colors[idx] = hi
 						# visible cue: left column on face
-						colors[0] = colors[1] = colors[2] = (0, 80, 200)
+						colors[0] = colors[1] = colors[2] = cue
 						_set_pixels_raw(lights, colors)
 						time.sleep(0.28)
 					# Back interior; face shows warm right column
 					for idx in BACK_IN:
 						if _state.get("pattern") != "interior_scan":
 							return
+						hi = _cap_rgb(max_level, max_level, max_level)
+						cue = _cap_rgb(200, 60, 0)
 						colors = {i: (0, 0, 0) for i in range(_led_count())}
-						colors[idx] = (255, 255, 255)
-						colors[3] = colors[4] = colors[5] = (200, 60, 0)
+						colors[idx] = hi
+						colors[3] = colors[4] = colors[5] = cue
 						_set_pixels_raw(lights, colors)
 						time.sleep(0.28)
 				return
 			if name == "knight_front":
 				path = FRONT_RING + list(reversed(FRONT_RING[1:-1]))
+				hot = _cap_rgb(255, 30, 30)
+				trail = _cap_rgb(80, 0, 0)
 				while _state.get("pattern") == "knight_front":
 					for idx in path:
 						if _state.get("pattern") != "knight_front":
 							return
 						colors = {i: (0, 0, 0) for i in FRONT_PANEL}
-						colors[idx] = (255, 30, 30)
+						colors[idx] = hot
 						# dim trail
 						pos = path.index(idx) if idx in path else 0
 						if pos > 0:
-							colors[path[pos - 1]] = (80, 0, 0)
+							colors[path[pos - 1]] = trail
 						_set_pixels_raw(lights, colors)
 						time.sleep(0.09)
 				return
 			if name == "rainbow_front":
 				import colorsys
 				t0 = time.time()
+				v = max_level / 255.0
 				while _state.get("pattern") == "rainbow_front":
 					t = time.time() - t0
 					colors = {}
 					for j, idx in enumerate(FRONT_PANEL):
 						h = (t * 0.15 + j / 6.0) % 1.0
-						r, g, b = colorsys.hsv_to_rgb(h, 1.0, 1.0)
+						r, g, b = colorsys.hsv_to_rgb(h, 1.0, v)
 						colors[idx] = (int(r * 255), int(g * 255), int(b * 255))
 					_set_pixels_raw(lights, colors)
 					time.sleep(0.05)
@@ -731,12 +799,14 @@ def register_routes(app) -> None:
 				while _state.get("pattern") == "sparkle":
 					colors = {}
 					# denser on face so effect is visible; sparse interior
+					lo = max(20, max_level // 4)
+					hi = max_level
 					for idx in FRONT_PANEL:
 						if random.random() < 0.45:
-							colors[idx] = (random.randint(80, 255),) * 3
+							colors[idx] = (random.randint(lo, hi),) * 3
 					for idx in ALL_INTERIOR:
 						if random.random() < 0.2:
-							colors[idx] = (random.randint(40, 180),) * 3
+							colors[idx] = (random.randint(lo, hi),) * 3
 					_set_pixels_raw(lights, colors)
 					time.sleep(0.08)
 				return
@@ -758,7 +828,8 @@ def register_routes(app) -> None:
 		_state["pattern"] = name
 		if name == "breath":
 			try:
-				lights.breath(70, 70, 255)
+				bc = _pat_settings()["breath_color"]
+				lights.breath(bc[0], bc[1], bc[2])
 				return True, None
 			except Exception as e:
 				_state["pattern"] = None
