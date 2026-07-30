@@ -14,7 +14,7 @@
 importScripts("https://storage.googleapis.com/workbox-cdn/releases/4.3.1/workbox-sw.js");
 
 importScripts(
-  "/precache-manifest.4e116f0caff14f5c2e6c5591cfc8a562.js?v=hw-health-20260727"
+  "/precache-manifest.4e116f0caff14f5c2e6c5591cfc8a562.js?v=video-latency-20260729"
 );
 
 workbox.core.setCacheNameDetails({prefix: "adeept_bot_controller_web"});

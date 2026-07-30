@@ -4,7 +4,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/app.afe6e7c5.css"
   },
   {
-    "revision": "a2deb610c3bd032640f0e049d6c81165",
+    "revision": "867fdc62a57c38b7221a505db741f0fb",
     "url": "/css/ui-polish.css"
   },
   {
@@ -140,7 +140,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/js/app.6cd8941d.js"
   },
   {
-    "revision": "1bade55f777f2fc47b06c38898f586fd",
+    "revision": "63793776015beeb1b9d4f47c99981f3c",
     "url": "/js/camera-stream-fix.js"
   },
   {
