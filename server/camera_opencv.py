@@ -1,26 +1,27 @@
-#!/usr/bin/env/python3
-# File name   : camera_opencv.py
-# Website     : www.Adeept.com
-# Author      : Adeept
-# Date        : 2025/04/16
-import os
-import cv2
-from base_camera import BaseCamera
-import RPIservo
-import numpy as np
-import move as move
+"""Capture Raspberry Pi camera frames and apply optional OpenCV overlays."""
+
+from __future__ import annotations
+
 import datetime
-import Kalman_filter as Kalman_filter
-import PID
-import time
+import logging
 import threading
+import time
+from collections.abc import Iterator
+from typing import ClassVar
+
+import cv2
 import imutils
-import picamera2
+import Kalman_filter
 import libcamera
-from picamera2 import Picamera2, Preview
-import io
-from picamera2.encoders import MJPEGEncoder
-from picamera2.outputs import FileOutput
+import move
+import numpy as np
+import PID
+import RPIservo
+from base_camera import BaseCamera, FrameMetrics
+from picamera2 import Picamera2
+
+LOGGER = logging.getLogger(__name__)
+
 pid = PID.PID()
 pid.SetKp(0.5)
 pid.SetKd(0)
@@ -325,8 +326,12 @@ class CVThread(threading.Thread):
 
 
 class Camera(BaseCamera):
-    video_source = 0
-    modeSelect = 'none'
+    """Provide fresh, resource-conscious JPEG frames for the web stream."""
+
+    video_source: ClassVar[int] = 0
+    modeSelect: ClassVar[str] = "none"
+    stream_fps: ClassVar[int] = 15
+    jpeg_quality: ClassVar[int] = 75
 
     def colorFindSet(self, invarH, invarS, invarV):
         global colorUpper, colorLower
@@ -398,8 +403,19 @@ class Camera(BaseCamera):
         Camera.video_source = source
 
     @staticmethod
-    def frames():
-        global ImgIsNone, hflip, vflip
+    def frames() -> Iterator[bytes]:
+        """
+        Yield low-latency JPEG frames from Picamera2.
+
+        Frames are captured at a bounded rate without Picamera2's previous-frame
+        queue, optionally annotated by the existing CV worker, and encoded once.
+
+        Yields:
+            JPEG-encoded camera frames.
+
+        Raises:
+            RuntimeError: If Picamera2 cannot be opened or started.
+        """
         picam2 = Picamera2()
 
         preview_config = picam2.preview_configuration
@@ -407,34 +423,46 @@ class Camera(BaseCamera):
         preview_config.format = 'RGB888'
         preview_config.transform = libcamera.Transform(hflip=hflip, vflip=vflip)
         preview_config.colour_space = libcamera.ColorSpace.Sycc()
-        preview_config.buffer_count = 4
-        preview_config.queue = True
+        # Keep only the buffers needed for continuous capture. queue=False
+        # guarantees capture_array() waits for a frame produced after the call,
+        # rather than handing back Picamera2's cached previous frame.
+        preview_config.buffer_count = 2
+        preview_config.queue = False
+        frame_duration_us = int(1000000 / Camera.stream_fps)
+        preview_config.controls.FrameDurationLimits = (
+            frame_duration_us,
+            frame_duration_us,
+        )
 
         if not picam2.is_open:
             raise RuntimeError('Could not start camera.')
 
         try:
             picam2.start()
-        except Exception as e:
-            print(f"\033[38;5;1mError:\033[0m\n{e}")
-            print("\nPlease check whether the camera is connected well,  \
-                  and disable the \"legacy camera driver\" on raspi-config")
+        except Exception as error:
+            raise RuntimeError(
+                "Could not start Picamera2; check the camera connection and legacy camera-driver setting."
+            ) from error
 
         cvt = CVThread()
         cvt.start()
+        previous_capture_at: float | None = None
+        measured_fps = 0.0
+        camera_error_reported = False
+        overlay_error_reported = False
 
         while True:
-            start_time = time.time()
+            capture_started = time.monotonic()
             img = picam2.capture_array()
+            capture_finished = time.monotonic()
+            captured_at = time.time()
 
             if img is None:
-                if ImgIsNone == 0:
-                    print("--------------------")
-                    print("\033[31merror: Unable to read camera data.\033[0m")
-                    print("Use the command: \033[34m'sudo killall python3'\033[0m. Close the self-starting program webServer.py")
-                    print("Press the keyboard keys \033[34m'Ctrl + C'\033[0m multiple times to exit the current program.")
-                    print("--------Ctrl+C quit-----------")
-                    ImgIsNone = 1
+                if not camera_error_reported:
+                    LOGGER.error(
+                        "Picamera2 returned no frame; inspect Adeept_Robot.service logs before restarting it."
+                    )
+                    camera_error_reported = True
                 continue
 
             if Camera.modeSelect == 'none':
@@ -445,8 +473,45 @@ class Camera(BaseCamera):
                     cvt.resume()
                 try:
                     img = cvt.elementDraw(img)
-                except:
-                    pass
+                except Exception:
+                    if not overlay_error_reported:
+                        LOGGER.exception(
+                            "CV overlay failed; streaming the raw frame."
+                        )
+                        overlay_error_reported = True
 
-            if cv2.imencode('.jpg', img)[0]:
-                yield cv2.imencode('.jpg', img)[1].tobytes()
+            encode_started = time.monotonic()
+            encoded_ok, encoded_img = cv2.imencode(
+                '.jpg',
+                img,
+                [cv2.IMWRITE_JPEG_QUALITY, Camera.jpeg_quality],
+            )
+            encode_finished = time.monotonic()
+
+            if not encoded_ok:
+                continue
+
+            if previous_capture_at is not None:
+                instant_fps = 1.0 / max(
+                    capture_finished - previous_capture_at, 0.000001
+                )
+                if measured_fps == 0.0:
+                    measured_fps = instant_fps
+                else:
+                    measured_fps = measured_fps * 0.8 + instant_fps * 0.2
+            previous_capture_at = capture_finished
+
+            Camera.set_frame_metrics(
+                FrameMetrics(
+                    captured_at=captured_at,
+                    capture_wait_ms=(
+                        capture_finished - capture_started
+                    )
+                    * 1000.0,
+                    encode_ms=(encode_finished - encode_started) * 1000.0,
+                    fps=measured_fps,
+                    width=int(img.shape[1]),
+                    height=int(img.shape[0]),
+                )
+            )
+            yield encoded_img.tobytes()

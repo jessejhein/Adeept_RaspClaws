@@ -1,103 +1,185 @@
-#!/usr/bin/env/python3
-# File name   : base_camera.py
-# Website     : www.Adeept.com
-# Author      : Adeept
-# Date        : 2025/04/16
-import time
+"""Publish the newest camera frame to one or more streaming clients."""
+
+from __future__ import annotations
+
+import logging
 import threading
-import cv2
-try:
-    from greenlet import getcurrent as get_ident
-except ImportError:
-    try:
-        from thread import get_ident
-    except ImportError:
-        from _thread import get_ident
+import time
+from collections.abc import Iterator
+from dataclasses import dataclass, field, replace
+from typing import ClassVar
+
+LOGGER = logging.getLogger(__name__)
 
 
-class CameraEvent(object):
-    """An Event-like class that signals all active clients when a new frame is
-    available.
-    """
-    def __init__(self):
-        self.events = {}
+@dataclass(slots=True)
+class ClientEvent:
+    """Signal state for one video-stream client."""
 
-    def wait(self):
-        """Invoked from each client's thread to wait for the next frame."""
-        ident = get_ident()
-        if ident not in self.events:
-            # this is a new client
-            # add an entry for it in the self.events dict
-            # each entry has two elements, a threading.Event() and a timestamp
-            self.events[ident] = [threading.Event(), time.time()]
-        return self.events[ident][0].wait()
+    signal: threading.Event = field(default_factory=threading.Event)
+    last_signaled_at: float = field(default_factory=time.time)
 
-    def set(self):
-        """Invoked by the camera thread when a new frame is available."""
+
+@dataclass(frozen=True, slots=True)
+class FrameMetrics:
+    """Capture and encoding measurements associated with one JPEG frame."""
+
+    captured_at: float
+    capture_wait_ms: float
+    encode_ms: float
+    fps: float
+    width: int
+    height: int
+    sequence: int = 0
+    published_at: float = 0.0
+
+    def to_status(self, *, current_time: float) -> dict[str, float | int]:
+        """Return the metrics in the JSON-compatible status representation."""
+        return {
+            "captured_at": self.captured_at,
+            "capture_wait_ms": self.capture_wait_ms,
+            "encode_ms": self.encode_ms,
+            "fps": self.fps,
+            "width": self.width,
+            "height": self.height,
+            "sequence": self.sequence,
+            "published_at": self.published_at,
+            "frame_age_ms": max(
+                0.0,
+                (current_time - self.captured_at) * 1000.0,
+            ),
+        }
+
+
+class CameraEvent:
+    """Signal all active stream clients when a fresh frame is available."""
+
+    def __init__(self) -> None:
+        self.events: dict[int, ClientEvent] = {}
+        self.lock: threading.Lock = threading.Lock()
+
+    def wait(self) -> bool:
+        """Wait for the next frame on behalf of the current client."""
+        ident = threading.get_ident()
+        with self.lock:
+            if ident not in self.events:
+                self.events[ident] = ClientEvent()
+            client_event = self.events[ident]
+        return client_event.signal.wait()
+
+    def set(self) -> None:
+        """Signal a fresh frame and discard clients stalled for five seconds."""
         now = time.time()
-        remove = None
-        for ident, event in self.events.items():
-            if not event[0].isSet():
-                # if this client's event is not set, then set it
-                # also update the last set timestamp to now
-                event[0].set()
-                event[1] = now
-            else:
-                # if the client's event is already set, it means the client
-                # did not process a previous frame
-                # if the event stays set for more than 5 seconds, then assume
-                # the client is gone and remove it
-                if now - event[1] > 5:
-                    remove = ident
-        if remove:
-            del self.events[remove]
+        stale_clients: list[int] = []
+        with self.lock:
+            for ident, client_event in self.events.items():
+                if not client_event.signal.is_set():
+                    client_event.signal.set()
+                    client_event.last_signaled_at = now
+                else:
+                    if now - client_event.last_signaled_at > 5:
+                        stale_clients.append(ident)
+            for ident in stale_clients:
+                del self.events[ident]
 
-    def clear(self):
-        """Invoked from each client's thread after a frame was processed."""
-        self.events[get_ident()][0].clear()
+    def clear(self) -> None:
+        """Clear the fresh-frame signal for the current client."""
+        with self.lock:
+            client_event = self.events.get(threading.get_ident())
+            if client_event is not None:
+                client_event.signal.clear()
 
 
-class BaseCamera(object):
-    thread = None  # background thread that reads frames from camera
-    frame = None  # current frame is stored here by background thread
-    last_access = 0  # time of last client access to the camera
-    event = CameraEvent()
+class BaseCamera:
+    """Maintain a background producer and expose only its newest JPEG frame."""
 
-    def __init__(self):
-        """Start the background camera thread if it isn't running yet."""
+    thread: ClassVar[threading.Thread | None] = None
+    frame: ClassVar[bytes | None] = None
+    frame_metrics: ClassVar[FrameMetrics | None] = None
+    pending_frame_metrics: ClassVar[FrameMetrics | None] = None
+    frame_sequence: ClassVar[int] = 0
+    last_access: ClassVar[float] = 0.0
+    event: ClassVar[CameraEvent] = CameraEvent()
+
+    def __init__(self) -> None:
+        """
+        Start the shared camera producer and wait for its first frame.
+
+        Raises:
+            RuntimeError: If the producer exits before publishing a frame.
+        """
         if BaseCamera.thread is None:
             BaseCamera.last_access = time.time()
 
             # start background frame thread
-            BaseCamera.thread = threading.Thread(target=self._thread)
-            BaseCamera.thread.start()
+            producer_thread = threading.Thread(
+                target=self._thread,
+                name="camera-frame-producer",
+            )
+            BaseCamera.thread = producer_thread
+            producer_thread.start()
 
-            # wait until frames are available
-            while self.get_frame() is None:
-                time.sleep(0)
+            # Poll only during startup. Registering a client event here can
+            # miss a finite producer's first signal and wait forever.
+            while BaseCamera.frame is None:
+                if not producer_thread.is_alive():
+                    raise RuntimeError(
+                        "Camera frame producer stopped before its first frame."
+                    )
+                time.sleep(0.01)
 
-    def get_frame(self):
-        """Return the current camera frame."""
+    def get_frame(self) -> bytes:
+        """
+        Wait for and return the newest JPEG frame.
+
+        Raises:
+            RuntimeError: If the producer signals without publishing a frame.
+        """
         BaseCamera.last_access = time.time()
 
         # wait for a signal from the camera thread
-        BaseCamera.event.wait()
+        _ = BaseCamera.event.wait()
         BaseCamera.event.clear()
 
-        return BaseCamera.frame
+        frame = BaseCamera.frame
+        if frame is None:
+            raise RuntimeError("Camera signaled before publishing a frame.")
+        return frame
 
     @staticmethod
-    def frames():
-        """"Generator that returns frames from the camera."""
-        raise RuntimeError('Must be implemented by subclasses.')
+    def set_frame_metrics(metrics: FrameMetrics) -> None:
+        """Attach inexpensive capture/encode measurements to the next frame."""
+        BaseCamera.pending_frame_metrics = metrics
+
+    @staticmethod
+    def get_frame_metrics() -> dict[str, float | int] | None:
+        """Return a snapshot suitable for the lightweight status endpoint."""
+        metrics = BaseCamera.frame_metrics
+        if metrics is None:
+            return None
+
+        return metrics.to_status(current_time=time.time())
+
+    @staticmethod
+    def frames() -> Iterator[bytes]:
+        """Yield JPEG frames from a concrete camera implementation."""
+        raise RuntimeError("Must be implemented by subclasses.")
 
     @classmethod
-    def _thread(cls):
+    def _thread(cls) -> None:
         """Camera background thread."""
-        print('Starting camera thread.')
+        LOGGER.info("Starting camera frame producer")
         frames_iterator = cls.frames()
         for frame in frames_iterator:
             BaseCamera.frame = frame
+            BaseCamera.frame_sequence += 1
+            metrics = BaseCamera.pending_frame_metrics
+            if metrics is not None:
+                BaseCamera.frame_metrics = replace(
+                    metrics,
+                    sequence=BaseCamera.frame_sequence,
+                    published_at=time.time(),
+                )
             BaseCamera.event.set()  # send signal to clients
             time.sleep(0)
 

@@ -4,8 +4,12 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/app.afe6e7c5.css"
   },
   {
-    "revision": "a2deb610c3bd032640f0e049d6c81165",
+    "revision": "867fdc62a57c38b7221a505db741f0fb",
     "url": "/css/ui-polish.css"
+  },
+  {
+    "revision": "assembly-panel-css-20260727f",
+    "url": "/css/assembly-panel.css"
   },
   {
     "revision": "682fe012989b3f6c68fa",
@@ -128,7 +132,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/img/bg.jpg"
   },
   {
-    "revision": "cb1433e057af8c632d845b0cd61e0d0c",
+    "revision": "566fa6b17f48c1843d79b912644470e2",
     "url": "/index.html"
   },
   {
@@ -136,12 +140,20 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/js/app.6cd8941d.js"
   },
   {
-    "revision": "1bade55f777f2fc47b06c38898f586fd",
-    "url": "/js/camera-stream-fix.js"
+    "revision": "63793776015beeb1b9d4f47c99981f3c",
+    "url": "/js/camera-stream-fix.js?v=stream-20260730"
   },
   {
     "revision": "26d197f923dcb02e6d88ef09d7b02e4a",
     "url": "/js/ui-text-polish.js"
+  },
+  {
+    "revision": "assembly-panel-js-20260727f",
+    "url": "/js/assembly-panel.js"
+  },
+  {
+    "revision": "hardware-health-js-20260727",
+    "url": "/js/hardware-health.js"
   },
   {
     "revision": "682fe012989b3f6c68fa",

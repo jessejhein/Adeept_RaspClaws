@@ -29,3 +29,10 @@ ENV/
 Thumbs.db
 .idea/
 .vscode/
+
+# Agent ignore
+.plans/
+.tmp/
+/tmp/
+/temp/
+/plans/

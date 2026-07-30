@@ -12,11 +12,15 @@ import threading
 
 class RobotLight(threading.Thread):
 	def __init__(self, *args, **kwargs):
-		self.LED_COUNT	  	= 16	  # Number of LED pixels.
-		self.LED_PIN		= 12	  # GPIO pin connected to the pixels (18 uses PWM!).
+		led_count = int(kwargs.pop('led_count', 16))
+		led_pin = int(kwargs.pop('led_pin', 12))
+		led_brightness = int(kwargs.pop('led_brightness', 255))
+
+		self.LED_COUNT	  	= led_count	  # Number of LED pixels.
+		self.LED_PIN		= led_pin	  # GPIO pin connected to the pixels (18 uses PWM!).
 		self.LED_FREQ_HZ	= 800000  # LED signal frequency in hertz (usually 800khz)
 		self.LED_DMA		= 10	  # DMA channel to use for generating signal (try 10)
-		self.LED_BRIGHTNESS = 255	 # Set to 0 for darkest and 255 for brightest
+		self.LED_BRIGHTNESS = led_brightness	 # Set to 0 for darkest and 255 for brightest
 		self.LED_INVERT	 = False   # True to invert the signal (when using NPN transistor level shift)
 		self.LED_CHANNEL	= 0	   # set to '1' for GPIOs 13, 19, 41, 45 or 53
 
@@ -129,25 +133,34 @@ class RobotLight(threading.Thread):
 
 	# Define functions which animate LEDs in various ways.
 	def setColor(self, R, G, B):
-		"""Wipe color across display a pixel at a time."""
-		color = Color(int(R),int(G),int(B))
-		for i in range(self.strip.numPixels()):
+		"""Set all pixels then show once (cheaper / more reliable under CPU load)."""
+		color = Color(int(R), int(G), int(B))
+		n = self.strip.numPixels()
+		for i in range(n):
 			self.strip.setPixelColor(i, color)
-			self.strip.show()
+		self.strip.show()
 
 
 	def setSomeColor(self, R, G, B, ID):
-		color = Color(int(R),int(G),int(B))
-		#print(int(R),'  ',int(G),'  ',int(B))
+		"""Set listed pixel indices then show once."""
+		color = Color(int(R), int(G), int(B))
+		n = self.strip.numPixels()
 		for i in ID:
-			self.strip.setPixelColor(i, color)
-			self.strip.show()
+			if 0 <= int(i) < n:
+				self.strip.setPixelColor(int(i), color)
+		self.strip.show()
+
+
+	def stopEffects(self, clear=False):
+		"""Stop breath/police without necessarily blanking the strip."""
+		self.lightMode = 'none'
+		self.__flag.clear()
+		if clear:
+			self.setColor(0, 0, 0)
 
 
 	def pause(self):
-		self.lightMode = 'none'
-		self.setColor(0,0,0)
-		self.__flag.clear()
+		self.stopEffects(clear=True)
 
 
 	def resume(self):
@@ -181,26 +194,83 @@ class RobotLight(threading.Thread):
 			time.sleep(0.1)
 
 
-	def breath(self, R_input, G_input, B_input):
+	def _pattern_settings(self):
+		"""Load breath/ramp settings from robot_config (live if available)."""
+		try:
+			import robot_config
+			return robot_config.led_pattern_settings()
+		except Exception:
+			return {
+				"max_level": 200,
+				"perceptual_ramp": True,
+				"breath_step_delay_s": 0.08,
+				"breath_steps": 24,
+				"breath_color": (55, 55, 200),
+				"gamma": 2.2,
+			}
+
+	def breath(self, R_input=None, G_input=None, B_input=None):
+		"""Start breathing. RGB optional — defaults / clamp from robot_config patterns."""
+		settings = self._pattern_settings()
+		max_level = settings["max_level"]
+		if R_input is None or G_input is None or B_input is None:
+			R_input, G_input, B_input = settings["breath_color"]
+		# Soft-cap peak to configured max_level
+		peak = max(int(R_input), int(G_input), int(B_input), 1)
+		if peak > max_level:
+			scale = max_level / float(peak)
+			R_input = int(round(int(R_input) * scale))
+			G_input = int(round(int(G_input) * scale))
+			B_input = int(round(int(B_input) * scale))
 		self.lightMode = 'breath'
-		self.colorBreathR = R_input
-		self.colorBreathG = G_input
-		self.colorBreathB = B_input
+		self.colorBreathR = int(R_input)
+		self.colorBreathG = int(G_input)
+		self.colorBreathB = int(B_input)
 		self.resume()
 
 
 	def breathProcessing(self):
 		while self.lightMode == 'breath':
-			for i in range(0,self.breathSteps):
+			settings = self._pattern_settings()
+			steps = int(settings["breath_steps"])
+			delay = float(settings["breath_step_delay_s"])
+			perceptual = bool(settings["perceptual_ramp"])
+			gamma = float(settings.get("gamma", 2.2))
+			max_level = int(settings["max_level"])
+			# Peak color already capped in breath(); still enforce max_level
+			pr = min(self.colorBreathR, max_level)
+			pg = min(self.colorBreathG, max_level)
+			pb = min(self.colorBreathB, max_level)
+			try:
+				import robot_config
+				ramp = robot_config.ramp_intensity
+			except Exception:
+				def ramp(t, max_level=200, perceptual=True, gamma=2.2):
+					t = max(0.0, min(1.0, float(t)))
+					if perceptual:
+						return int(round((t ** gamma) * max_level))
+					return int(round(t * max_level))
+
+			# Use max channel as intensity envelope peak
+			peak = max(pr, pg, pb, 1)
+			# Up
+			for i in range(0, steps + 1):
 				if self.lightMode != 'breath':
 					break
-				self.setColor(self.colorBreathR*i/self.breathSteps, self.colorBreathG*i/self.breathSteps, self.colorBreathB*i/self.breathSteps)
-				time.sleep(0.03)
-			for i in range(0,self.breathSteps):
+				t = i / float(steps)
+				level = ramp(t, max_level=peak, perceptual=perceptual, gamma=gamma)
+				s = level / float(peak)
+				self.setColor(pr * s, pg * s, pb * s)
+				time.sleep(delay)
+			# Down
+			for i in range(0, steps + 1):
 				if self.lightMode != 'breath':
 					break
-				self.setColor(self.colorBreathR-(self.colorBreathR*i/self.breathSteps), self.colorBreathG-(self.colorBreathG*i/self.breathSteps), self.colorBreathB-(self.colorBreathB*i/self.breathSteps))
-				time.sleep(0.03)
+				t = 1.0 - (i / float(steps))
+				level = ramp(t, max_level=peak, perceptual=perceptual, gamma=gamma)
+				s = level / float(peak)
+				self.setColor(pr * s, pg * s, pb * s)
+				time.sleep(delay)
 
 
 	def frontLight(self, switch):
@@ -252,8 +322,11 @@ class RobotLight(threading.Thread):
 
 
 	def lightChange(self):
+		# Do not auto-clear LEDs on 'none' — that fought assembly pixel tests and
+		# blanked the strip after every effect stop.
 		if self.lightMode == 'none':
-			self.pause()
+			self.__flag.clear()
+			return
 		elif self.lightMode == 'police':
 			self.policeProcessing()
 		elif self.lightMode == 'breath':

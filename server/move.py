@@ -576,18 +576,10 @@ def move(step_input, speed, command):
 
 
 def stand():
-	pwm.set_pwm(0,0,300)
-	pwm.set_pwm(1,0,300)
-	pwm.set_pwm(2,0,300)
-	pwm.set_pwm(3,0,300)
-	pwm.set_pwm(4,0,300)
-	pwm.set_pwm(5,0,300)
-	pwm.set_pwm(6,0,300)
-	pwm.set_pwm(7,0,300)
-	pwm.set_pwm(8,0,300)
-	pwm.set_pwm(9,0,300)
-	pwm.set_pwm(10,0,300)
-	pwm.set_pwm(11,0,300)
+	# Use calibrated centers from RPIservo (kept in sync with robot_config.yaml)
+	for ch in range(12):
+		center = getattr(RPIservo, 'init_pwm%d' % ch, 300)
+		pwm.set_pwm(ch, 0, int(center))
 
 
 '''
