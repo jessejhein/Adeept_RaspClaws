@@ -33,6 +33,49 @@ speed_set = 100
 rad = 0.5
 turnWiggle = 60
 
+_gait_test_timer: threading.Timer | None = None
+_gait_test_generation: int = 0
+
+
+def _cancel_gait_test() -> None:
+	global _gait_test_timer, _gait_test_generation
+	_gait_test_generation += 1
+	if _gait_test_timer is not None:
+		_gait_test_timer.cancel()
+		_gait_test_timer = None
+
+
+def _finish_gait_test(generation: int) -> None:
+	global _gait_test_timer
+	if generation != _gait_test_generation:
+		return
+	_gait_test_timer = None
+	move.commandInput('stand')
+
+
+def _start_gait_test(command_input: str) -> bool:
+	global _gait_test_timer
+	parts = command_input.split()
+	if len(parts) != 3 or parts[1] not in ('forward', 'backward', 'left', 'right'):
+		return False
+	try:
+		duration_ms = int(parts[2])
+	except ValueError:
+		return False
+
+	duration_ms = max(150, min(1200, duration_ms))
+	_cancel_gait_test()
+	move.commandInput(parts[1])
+	generation = _gait_test_generation
+	_gait_test_timer = threading.Timer(
+		duration_ms / 1000.0,
+		_finish_gait_test,
+		args=(generation,),
+	)
+	_gait_test_timer.daemon = True
+	_gait_test_timer.start()
+	return True
+
 # Load YAML centers/limits before first moveInit when possible
 try:
 	ROBOT_CFG = robot_config.load_config()
@@ -53,6 +96,11 @@ if ROBOT_CFG is not None:
 	# move.py captured centers at import; refresh module globals for gait bases
 	for _i in range(16):
 		setattr(move, 'pwm%d' % _i, scGear.initPos[_i])
+	move.configure_gait(
+		settings=(ROBOT_CFG.get('motion') or {}).get('gait'),
+		min_positions=scGear.minPos,
+		max_positions=scGear.maxPos,
+	)
 scGear.moveInit()
 
 P_sc = RPIservo.ServoCtrl()
@@ -164,6 +212,17 @@ def switchCtrl(command_input, response):
 
 def robotCtrl(command_input, response):
 	global direction_command, turn_command
+	if command_input.startswith('gaitTest '):
+		_start_gait_test(command_input)
+		return
+	if command_input == 'gaitTestStop':
+		_cancel_gait_test()
+		move.commandInput('stand')
+		return
+
+	if command_input in ('forward', 'backward', 'left', 'right', 'DS', 'TS'):
+		_cancel_gait_test()
+
 	if 'forward' == command_input:
 		direction_command = 'forward'
 		move.commandInput(direction_command)

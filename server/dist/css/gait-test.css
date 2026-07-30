@@ -1,0 +1,102 @@
+#gait-test-panel {
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid rgba(38, 50, 56, 0.2);
+}
+
+.gait-test-header,
+.gait-test-footer,
+.gait-test-duration {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.gait-test-header h3 {
+  margin: 0;
+  color: #263238;
+  font-size: 0.82rem;
+}
+
+.gait-test-warning {
+  color: #8a4b08;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.gait-test-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin: 0.6rem 0;
+}
+
+.gait-test-button,
+.gait-test-stop {
+  min-height: 2.2rem;
+  border: 1px solid #607d8b;
+  border-radius: 5px;
+  background: #37474f;
+  color: #fff;
+  cursor: pointer;
+  font: 700 0.72rem/1 system-ui, sans-serif;
+}
+
+.gait-test-button:hover:not(:disabled),
+.gait-test-stop:hover:not(:disabled) {
+  background: #455a64;
+}
+
+.gait-test-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.gait-test-button span {
+  font-size: 1rem;
+}
+
+.gait-test-duration {
+  color: #455a64;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+#gait-test-duration-input {
+  display: block;
+  width: 100%;
+  margin: 0.25rem 0 0.6rem;
+  accent-color: #1e88e5;
+}
+
+.gait-test-duration output {
+  min-width: 3.6rem;
+  color: #263238;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.gait-test-status {
+  color: #2e7d32;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.gait-test-status.bad {
+  color: #b71c1c;
+}
+
+.gait-test-stop {
+  min-height: 1.9rem;
+  padding: 0 0.75rem;
+  border-color: #b71c1c;
+  background: #c62828;
+}
+
+@media (max-width: 420px) {
+  .gait-test-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

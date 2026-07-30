@@ -68,6 +68,22 @@ camera:
   tilt_channel: 13
   invert_pan: false
   invert_tilt: false
+motion:
+  gait:
+    # One complete alternating-tripod cycle. Larger is slower.
+    cycle_seconds: 0.80
+    # Conservative shoulder travel to reduce foot slip and leg collisions.
+    stride_pwm: 28
+    turn_stride_pwm: 20
+    # Knee travel above a lightly planted stance.
+    lift_pwm: 55
+    stance_pwm: -8
+    # A shorter swing leaves brief all-feet-down intervals and slows planted travel.
+    swing_fraction: 0.40
+    # PCA9685 runs at 50 Hz, so update once per 20 ms PWM frame.
+    update_interval_s: 0.02
+    # Ramp starts, stops, reversals, and turns through intermediate strides.
+    command_transition_s: 0.25
 motors:
   - id: 0
     name: front_left_shoulder

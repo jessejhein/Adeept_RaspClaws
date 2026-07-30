@@ -1,17 +1,25 @@
-#! /usr/bin/python
+#!/usr/bin/env python3
+"""Control RaspClaws servos, stabilization, and walking trajectories."""
+
+from __future__ import annotations
+
 # File name   : move.py
 # Description : Controlling all servos
 # Website	 : www.adeept.com
 # E-mail	  : support@adeept.com
 # Author	  : William
 # Date		: 2019/04/08
+import threading
 import time
+from collections.abc import Mapping, Sequence
+
 import Adafruit_PCA9685
 from mpu6050 import mpu6050
+
 import Kalman_filter
 import PID
-import threading
 import RPIservo
+import gait
 
 '''
 change this variables to 0 to reverse all the servos.
@@ -1095,66 +1103,210 @@ new_frame = 0
 direction_command = 'no'
 turn_command = 'no'
 
+gait_config = gait.GaitConfig()
+gait_state = gait.GaitState()
+gait_min_pwm = [100] * 12
+gait_max_pwm = [560] * 12
 
-def move_thread():
-	global step_set
-	stand_stu = 1
-	if not steadyMode:
-		if direction_command == 'forward' and turn_command == 'no':
-			if SmoothMode:
-				dove(step_set,35,0.001,DPI,'no')
-				step_set += 1
-				if step_set == 5:
-					step_set = 1
 
-			else:
-				move(step_set, 35, 'no')
-				time.sleep(0.1)
-				step_set += 1
-				if step_set == 5:
-					step_set = 1
+def configure_gait(
+	settings: Mapping[str, object] | None = None,
+	min_positions: Sequence[int] | None = None,
+	max_positions: Sequence[int] | None = None,
+) -> None:
+	"""
+	Apply validated gait tuning and calibrated logical-channel limits.
 
-		elif direction_command == 'backward' and turn_command == 'no':
-			if SmoothMode:
-				dove(step_set,-35,0.001,DPI,'no')
-				step_set += 1
-				if step_set == 5:
-					step_set = 1
+	Args:
+		settings: Raw gait settings loaded from ``robot_config.yaml``.
+		min_positions: Minimum PWM value for each logical servo channel.
+		max_positions: Maximum PWM value for each logical servo channel.
+	"""
+	global gait_config, gait_min_pwm, gait_max_pwm
+	gait_config = gait.GaitConfig.from_mapping(settings)
+	if min_positions is not None:
+		gait_min_pwm = [int(value) for value in min_positions[:12]]
+	if max_positions is not None:
+		gait_max_pwm = [int(value) for value in max_positions[:12]]
 
-			else:
-				move(step_set, -35, 'no')
-				time.sleep(0.1)
-				step_set += 1
-				if step_set == 5:
-					step_set = 1
 
-		else:
-			pass
+def _write_gait_pwm(channel: int, value: int) -> None:
+	"""Write an already calibrated PWM value to one logical servo channel."""
+	pwm.set_pwm(channel, 0, value)
 
-		if turn_command != 'no':
-			if SmoothMode:
-				dove(step_set,35,0.001,DPI,turn_command)
-				step_set += 1
-				if step_set == 5:
-					step_set = 1
 
-			else:
-				move(step_set, 35, turn_command)
-				time.sleep(0.1)
-				step_set += 1
-				if step_set == 5:
-					step_set = 1
+def _servo_calibration(channel: int, center_pwm: int, direction: int) -> gait.ServoCalibration:
+	"""Build typed calibration from the runtime center and configured limits."""
+	low = gait_min_pwm[channel] if channel < len(gait_min_pwm) else 100
+	high = gait_max_pwm[channel] if channel < len(gait_max_pwm) else 560
+	return gait.ServoCalibration(
+		center_pwm=int(center_pwm),
+		minimum_pwm=low,
+		maximum_pwm=high,
+		direction=1 if direction else -1,
+	)
 
-		else:
-			pass
 
-		if turn_command == 'no' and direction_command == 'stand':
-			stand()
-			step_set = 1
-		pass
+def _set_gait_leg(
+	shoulder_channel: int,
+	knee_channel: int,
+	horizontal_pwm: float,
+	vertical_pwm: float,
+	*,
+	is_left: bool,
+) -> None:
+	"""Convert logical leg offsets into calibrated, direction-aware PWM writes."""
+	shoulder_center = getattr(RPIservo, 'init_pwm%d' % shoulder_channel, 300)
+	knee_center = getattr(RPIservo, 'init_pwm%d' % knee_channel, 300)
+	shoulder_direction = leftSide_direction if is_left else rightSide_direction
+	height_direction = leftSide_height if is_left else rightSide_height
+
+	shoulder_calibration = _servo_calibration(
+		channel=shoulder_channel,
+		center_pwm=shoulder_center,
+		direction=shoulder_direction,
+	)
+	knee_calibration = _servo_calibration(
+		channel=knee_channel,
+		center_pwm=knee_center,
+		direction=height_direction,
+	)
+	_write_gait_pwm(
+		shoulder_channel,
+		gait.calibrated_pwm(shoulder_calibration, horizontal_pwm),
+	)
+	_write_gait_pwm(
+		knee_channel,
+		gait.calibrated_pwm(knee_calibration, vertical_pwm),
+	)
+
+
+def _requested_motion() -> gait.MotionCommand:
+	if turn_command == 'left':
+		return 'left'
+	if turn_command == 'right':
+		return 'right'
+	if direction_command == 'forward':
+		return 'forward'
+	if direction_command == 'backward':
+		return 'backward'
+	return 'stand'
+
+
+def _write_continuous_gait() -> None:
+	"""Advance one timed gait sample and write all twelve leg servo channels."""
+	started = time.monotonic()
+	interval = gait_config.update_interval_seconds
+	if gait_state.last_update_seconds is None:
+		elapsed = interval
 	else:
+		elapsed = max(0.0, min(0.1, started - gait_state.last_update_seconds))
+	gait_state.last_update_seconds = started
+
+	command = _requested_motion()
+	motion_scales = gait.motion_scales(command)
+	stride_pwm = gait_config.turn_stride_pwm if command in ('left', 'right') else gait_config.stride_pwm
+	target_left = motion_scales.left * stride_pwm
+	target_right = motion_scales.right * stride_pwm
+	transition = gait_config.command_transition_seconds
+	stride_delta = gait_config.stride_pwm * elapsed / transition
+	activity_delta = elapsed / transition
+
+	gait_state.left_stride_pwm = gait.approach(gait_state.left_stride_pwm, target_left, stride_delta)
+	gait_state.right_stride_pwm = gait.approach(gait_state.right_stride_pwm, target_right, stride_delta)
+	target_activity = 0.0 if command == 'stand' else 1.0
+	gait_state.activity = gait.approach(gait_state.activity, target_activity, activity_delta)
+
+	is_idle = (
+		target_activity == 0.0
+		and abs(gait_state.left_stride_pwm) < 0.001
+		and abs(gait_state.right_stride_pwm) < 0.001
+		and gait_state.activity < 0.001
+	)
+	if is_idle:
+		if not gait_state.is_standing:
+			stand()
+			gait_state.is_standing = True
+	else:
+		gait_state.is_standing = False
+		cycle_seconds = gait_config.cycle_seconds * (1.25 if SmoothMode else 1.0)
+		gait_state.phase = (gait_state.phase + elapsed / cycle_seconds) % 1.0
+		lift_pwm = gait_config.lift_pwm * gait_state.activity
+		stance_pwm = gait_config.stance_pwm * gait_state.activity
+
+		first_tripod = gait.leg_trajectory(
+			phase=gait_state.phase,
+			stride_pwm=1.0,
+			lift_pwm=lift_pwm,
+			stance_pwm=stance_pwm,
+			swing_fraction=gait_config.swing_fraction,
+		)
+		second_tripod = gait.leg_trajectory(
+			phase=gait_state.phase + 0.5,
+			stride_pwm=1.0,
+			lift_pwm=lift_pwm,
+			stance_pwm=stance_pwm,
+			swing_fraction=gait_config.swing_fraction,
+		)
+
+		# Tripod 1: front-left, middle-right, rear-left.
+		_set_gait_leg(
+			shoulder_channel=0,
+			knee_channel=1,
+			horizontal_pwm=first_tripod.shoulder_pwm * gait_state.left_stride_pwm,
+			vertical_pwm=first_tripod.knee_pwm,
+			is_left=True,
+		)
+		_set_gait_leg(
+			shoulder_channel=8,
+			knee_channel=9,
+			horizontal_pwm=first_tripod.shoulder_pwm * gait_state.right_stride_pwm,
+			vertical_pwm=first_tripod.knee_pwm,
+			is_left=False,
+		)
+		_set_gait_leg(
+			shoulder_channel=4,
+			knee_channel=5,
+			horizontal_pwm=first_tripod.shoulder_pwm * gait_state.left_stride_pwm,
+			vertical_pwm=first_tripod.knee_pwm,
+			is_left=True,
+		)
+
+		# Tripod 2: rear-right, middle-left, front-right.
+		_set_gait_leg(
+			shoulder_channel=6,
+			knee_channel=7,
+			horizontal_pwm=second_tripod.shoulder_pwm * gait_state.right_stride_pwm,
+			vertical_pwm=second_tripod.knee_pwm,
+			is_left=False,
+		)
+		_set_gait_leg(
+			shoulder_channel=2,
+			knee_channel=3,
+			horizontal_pwm=second_tripod.shoulder_pwm * gait_state.left_stride_pwm,
+			vertical_pwm=second_tripod.knee_pwm,
+			is_left=True,
+		)
+		_set_gait_leg(
+			shoulder_channel=10,
+			knee_channel=11,
+			horizontal_pwm=second_tripod.shoulder_pwm * gait_state.right_stride_pwm,
+			vertical_pwm=second_tripod.knee_pwm,
+			is_left=False,
+		)
+
+	time.sleep(max(0.0, interval - (time.monotonic() - started)))
+
+
+def move_thread() -> None:
+	"""Run one continuous-gait or stabilization update."""
+	if not steadyMode:
+		_write_continuous_gait()
+	else:
+		gait_state.last_update_seconds = None
 		steady_X()
 		steady()
+		time.sleep(gait_config.update_interval_seconds)
 
 
 class RobotM(threading.Thread):
@@ -1180,41 +1332,54 @@ rm = RobotM()
 rm.start()
 rm.pause()
 
-def commandInput(command_input):
+def commandInput(command_input: str) -> None:
+	"""Update the requested motion mode without abruptly stopping the gait thread."""
 	global direction_command, turn_command, SmoothMode, steadyMode
 	if 'forward' == command_input:
 		direction_command = 'forward'
+		turn_command = 'no'
 		rm.resume()
-	
+
 	elif 'backward' == command_input:
 		direction_command = 'backward'
+		turn_command = 'no'
 		rm.resume()
 
 	elif 'stand' in command_input:
 		direction_command = 'stand'
-		rm.pause()
-
+		turn_command = 'no'
+		rm.resume()
 
 	elif 'left' == command_input:
+		direction_command = 'stand'
 		turn_command = 'left'
 		rm.resume()
 
 	elif 'right' == command_input:
+		direction_command = 'stand'
 		turn_command = 'right'
 		rm.resume()
 
 	elif 'no' in command_input:
 		turn_command = 'no'
-		rm.pause()
+		rm.resume()
 
 	elif 'automaticOff' == command_input:
 		SmoothMode = 0
 		steadyMode = 0
-		rm.pause()
+		direction_command = 'stand'
+		turn_command = 'no'
+		rm.resume()
 
 	elif 'automatic' == command_input:
 		rm.resume()
 		SmoothMode = 1
+
+	elif 'slow' == command_input:
+		SmoothMode = 1
+
+	elif 'fast' == command_input:
+		SmoothMode = 0
 
 	elif 'KD' == command_input:
 		steadyMode = 1
@@ -1227,7 +1392,9 @@ def commandInput(command_input):
 	elif 'speechOff' == command_input:
 		SmoothMode = 0
 		steadyMode = 0
-		rm.pause()
+		direction_command = 'stand'
+		turn_command = 'no'
+		rm.resume()
 
 
 if __name__ == '__main__':
