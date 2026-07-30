@@ -198,7 +198,7 @@ if not check_systemctl_service(robot_service_name):
     # Define the content of the systemd service file
     robot_service_content=f"""[Unit]
 Description=Auto-start robot control script
-After={wifi_service_name} 
+After=local-fs.target
 
 [Service]
 Type=simple
