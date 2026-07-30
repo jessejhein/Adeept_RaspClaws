@@ -41,18 +41,11 @@ RL: robotLight.RobotLight | None = None
 def _initialize_startup_lights() -> robotLight.RobotLight | None:
 	"""Create the WS281x driver before camera import can delay startup feedback."""
 	try:
-		led_count = 16
-		led_pin = 12
-		led_brightness = 255
-		if ROBOT_CFG is not None:
-			leds = ROBOT_CFG.get('leds') or {}
-			led_count = int(leds.get('count', 10))
-			led_pin = int(leds.get('pin_bcm', 12))
-			led_brightness = int(leds.get('brightness', 128))
+		hardware = startup_progress.StartupLightHardware.from_config(ROBOT_CFG)
 		lights = robotLight.RobotLight(
-			led_count=led_count,
-			led_pin=led_pin,
-			led_brightness=led_brightness,
+			led_count=hardware.led_count,
+			led_pin=hardware.pin_bcm,
+			led_brightness=hardware.brightness,
 		)
 		lights.start()
 		return lights
@@ -70,7 +63,12 @@ def _show_startup_progress(completed_steps: int) -> None:
 			completed_steps=completed_steps,
 			robot_config=ROBOT_CFG,
 		)
-		RL.show_startup_progress(progress.lit_pixel_ids, progress.color)
+		RL.show_startup_progress(
+			pixel_ids=progress.pixel_ids,
+			completed_pixel_ids=progress.lit_pixel_ids,
+			completed_color=progress.completed_color,
+			pending_color=progress.pending_color,
+		)
 	except Exception:
 		LOGGER.exception('Could not show startup progress stage %d', completed_steps)
 

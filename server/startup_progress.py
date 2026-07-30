@@ -8,7 +8,45 @@ from typing import cast
 
 StartupColor = tuple[int, int, int]
 DEFAULT_FRONT_PIXEL_IDS = (0, 1, 2, 3, 4, 5)
-DEFAULT_STARTUP_COLOR: StartupColor = (0, 80, 255)
+DEFAULT_COMPLETED_COLOR: StartupColor = (0, 128, 0)
+DEFAULT_PENDING_COLOR: StartupColor = (0, 0, 13)
+
+
+@dataclass(frozen=True, slots=True)
+class StartupLightHardware:
+    """Validated WS281x settings needed by the early startup indicator."""
+
+    led_count: int = 12
+    pin_bcm: int = 12
+    brightness: int = 255
+
+    @classmethod
+    def from_config(
+        cls,
+        robot_config: Mapping[str, object] | None,
+    ) -> StartupLightHardware:
+        """Load LED hardware settings from robot configuration with safe defaults."""
+        if robot_config is None:
+            return cls()
+
+        raw_leds = robot_config.get("leds")
+        if not isinstance(raw_leds, Mapping):
+            return cls()
+        leds = cast(Mapping[str, object], raw_leds)
+        return cls(
+            led_count=_bounded_int(
+                leds.get("count"), default=12, minimum=6, maximum=256
+            ),
+            pin_bcm=_bounded_int(
+                leds.get("pin_bcm"), default=12, minimum=0, maximum=53
+            ),
+            brightness=_bounded_int(
+                leds.get("brightness"),
+                default=255,
+                minimum=1,
+                maximum=255,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,19 +55,25 @@ class StartupLightProgress:
 
     completed_steps: int
     pixel_ids: tuple[int, ...] = DEFAULT_FRONT_PIXEL_IDS
-    color: StartupColor = DEFAULT_STARTUP_COLOR
+    completed_color: StartupColor = DEFAULT_COMPLETED_COLOR
+    pending_color: StartupColor = DEFAULT_PENDING_COLOR
 
     def __post_init__(self) -> None:
         """Reject incomplete physical layouts and invalid progress values."""
         if len(self.pixel_ids) != len(DEFAULT_FRONT_PIXEL_IDS):
             raise ValueError("startup progress requires exactly six front-panel pixels")
-        if not 1 <= self.completed_steps <= len(self.pixel_ids):
-            raise ValueError("completed_steps must be between 1 and 6")
+        if not 0 <= self.completed_steps <= len(self.pixel_ids):
+            raise ValueError("completed_steps must be between 0 and 6")
 
     @property
     def lit_pixel_ids(self) -> tuple[int, ...]:
         """Return the front-panel pixel IDs lit for this completed milestone."""
         return self.pixel_ids[: self.completed_steps]
+
+    @property
+    def pending_pixel_ids(self) -> tuple[int, ...]:
+        """Return front-panel pixel IDs still waiting for their milestone."""
+        return self.pixel_ids[self.completed_steps :]
 
 
 def progress_from_config(
@@ -82,3 +126,16 @@ def front_panel_pixel_ids(robot_config: Mapping[str, object] | None) -> tuple[in
     if len(pixel_ids) != len(DEFAULT_FRONT_PIXEL_IDS):
         return DEFAULT_FRONT_PIXEL_IDS
     return tuple(pixel_ids)
+
+
+def _bounded_int(
+    raw_value: object,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """Return a bounded integer setting, falling back for invalid boundary input."""
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+        return default
+    return max(minimum, min(maximum, raw_value))
