@@ -119,6 +119,17 @@ def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
 	camera.setdefault("invert_pan", False)
 	camera.setdefault("invert_tilt", False)
 
+	motion = data.setdefault("motion", {})
+	gait = motion.setdefault("gait", {})
+	gait.setdefault("cycle_seconds", 0.80)
+	gait.setdefault("stride_pwm", 28)
+	gait.setdefault("turn_stride_pwm", 20)
+	gait.setdefault("lift_pwm", 55)
+	gait.setdefault("stance_pwm", -8)
+	gait.setdefault("swing_fraction", 0.40)
+	gait.setdefault("update_interval_s", 0.02)
+	gait.setdefault("command_transition_s", 0.25)
+
 	raw_motors = data.get("motors") or []
 	by_id = {int(m["id"]): m for m in raw_motors if "id" in m}
 	default_names = {

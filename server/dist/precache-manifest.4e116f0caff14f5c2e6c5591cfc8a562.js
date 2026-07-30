@@ -12,6 +12,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/assembly-panel.css"
   },
   {
+    "revision": "gait-test-css-20260729a",
+    "url": "/css/gait-test.css"
+  },
+  {
     "revision": "682fe012989b3f6c68fa",
     "url": "/css/chunk-vendors.d6a48324.css"
   },
@@ -154,6 +158,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
   {
     "revision": "hardware-health-js-20260727",
     "url": "/js/hardware-health.js"
+  },
+  {
+    "revision": "gait-test-js-20260729a",
+    "url": "/js/gait-test-panel.js"
   },
   {
     "revision": "682fe012989b3f6c68fa",
