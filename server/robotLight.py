@@ -8,6 +8,7 @@ import RPi.GPIO as GPIO
 import sys
 from rpi_ws281x import *
 import threading
+from collections.abc import Sequence
 
 
 class RobotLight(threading.Thread):
@@ -148,6 +149,19 @@ class RobotLight(threading.Thread):
 		for i in ID:
 			if 0 <= int(i) < n:
 				self.strip.setPixelColor(int(i), color)
+		self.strip.show()
+
+	def show_startup_progress(self, pixel_ids: Sequence[int], color: tuple[int, int, int]) -> None:
+		"""Render a completed startup prefix on the configured front-panel LEDs."""
+		self.lightMode = 'none'
+		self.__flag.clear()
+		pixel_count = self.strip.numPixels()
+		for pixel_id in range(pixel_count):
+			self.strip.setPixelColor(pixel_id, Color(0, 0, 0))
+		startup_color = Color(int(color[0]), int(color[1]), int(color[2]))
+		for pixel_id in pixel_ids:
+			if 0 <= int(pixel_id) < pixel_count:
+				self.strip.setPixelColor(int(pixel_id), startup_color)
 		self.strip.show()
 
 

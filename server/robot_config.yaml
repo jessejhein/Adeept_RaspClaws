@@ -36,9 +36,8 @@ leds:
     breath_color: [55, 55, 200]
   # Per-pixel software brightness (0–255) is runtime-only via Assembly panel.
   #
-  # Boot note (not implemented yet): LEDs init late in webServer.py — only after
-  # Flask/camera thread starts (~15–20s+). For early boot feedback, RobotLight
-  # would need to start before camera_opencv / app.webapp().
+  # Startup uses the six front-panel pixels as progress: one lit at LED-driver
+  # initialization and all six lit once Flask and the control WebSocket are ready.
   # Physical map (wiring / faceplate layout). Indices are strip order 0..count-1.
   # Front face panel (6): outside front of the robot
   #   0 front bottom left    3 front bottom right
