@@ -7,6 +7,7 @@
 
 import time
 import threading
+import logging
 import move
 import os
 import info
@@ -22,9 +23,11 @@ import asyncio
 import websockets
 
 import json
-import app
 import assembly_api
 import robot_config
+import startup_progress
+
+LOGGER = logging.getLogger(__name__)
 
 OLED_connection = 0
 
@@ -32,6 +35,60 @@ functionMode = 0
 speed_set = 100
 rad = 0.5
 turnWiggle = 60
+RL: robotLight.RobotLight | None = None
+
+
+def _initialize_startup_lights() -> robotLight.RobotLight | None:
+	"""Create the WS281x driver before camera import can delay startup feedback."""
+	try:
+		hardware = startup_progress.StartupLightHardware.from_config(ROBOT_CFG)
+		lights = robotLight.RobotLight(
+			led_count=hardware.led_count,
+			led_pin=hardware.pin_bcm,
+			led_brightness=hardware.brightness,
+		)
+		lights.start()
+		return lights
+	except Exception:
+		LOGGER.exception('Could not initialize WS281x startup lights')
+		return None
+
+
+def _show_startup_progress(completed_steps: int) -> None:
+	"""Update the visible six-stage startup indicator when the light driver is available."""
+	if RL is None:
+		return
+	try:
+		progress = startup_progress.progress_from_config(
+			completed_steps=completed_steps,
+			robot_config=ROBOT_CFG,
+		)
+		RL.show_startup_progress(
+			pixel_ids=progress.pixel_ids,
+			completed_pixel_ids=progress.lit_pixel_ids,
+			completed_color=progress.completed_color,
+			pending_color=progress.pending_color,
+		)
+	except Exception:
+		LOGGER.exception('Could not show startup progress stage %d', completed_steps)
+
+
+def _start_idle_breath(lights: robotLight.RobotLight) -> None:
+	"""Start the configured idle LED effect after the complete indicator is visible."""
+	try:
+		breath_color = robot_config.led_pattern_settings().get('breath_color', (55, 55, 200))
+		lights.breath(breath_color[0], breath_color[1], breath_color[2])
+	except Exception:
+		LOGGER.exception('Could not start the idle LED breath effect')
+
+
+def _schedule_idle_breath() -> None:
+	"""Keep all six startup lights visible briefly before starting idle breathing."""
+	if RL is None:
+		return
+	timer = threading.Timer(0.75, _start_idle_breath, args=(RL,))
+	timer.daemon = True
+	timer.start()
 
 _gait_test_timer: threading.Timer | None = None
 _gait_test_generation: int = 0
@@ -82,6 +139,10 @@ try:
 except Exception as _cfg_err:
 	print('robot_config load failed, using RPIservo defaults:', _cfg_err)
 	ROBOT_CFG = None
+
+if __name__ == '__main__':
+	RL = _initialize_startup_lights()
+	_show_startup_progress(1)
 
 # Remap PCA9685 channels for wiring mistakes (e.g. shoulder/knee plugs swapped)
 if ROBOT_CFG is not None:
@@ -410,42 +471,28 @@ async def main_logic(websocket, path):
 if __name__ == '__main__':
 	switch.switchSetup()
 	switch.set_all_switch_off()
+	_show_startup_progress(2)
 
 	HOST = ''
-	PORT = 10223							  #Define port serial 
+	PORT = 10223							  #Define port serial
 	BUFSIZ = 1024							 #Define buffer size
 	ADDR = (HOST, PORT)
 
+	# Importing app creates Camera(), which waits for the first camera frame.
+	# Keep the startup indicator available while that hardware initialization runs.
+	import app as flask_app_module
+	_show_startup_progress(3)
+
 	global flask_app
-	flask_app = app.webapp()
+	flask_app = flask_app_module.webapp()
 	# Register assembly routes before Flask accepts traffic
-	assembly_api.register_routes(app.app)
+	assembly_api.register_routes(flask_app_module.app)
 	assembly_api.bind_robot(sc=scGear, lights=None, init_pwm=init_pwm, replace_num=replace_num)
+	_show_startup_progress(4)
 	flask_app.startthread()
+	_show_startup_progress(5)
 
-	try:
-		led_count = 16
-		led_pin = 12
-		led_bright = 255
-		if ROBOT_CFG is not None:
-			leds = ROBOT_CFG.get('leds') or {}
-			led_count = int(leds.get('count', 10))
-			led_pin = int(leds.get('pin_bcm', 12))
-			led_bright = int(leds.get('brightness', 128))
-		RL = robotLight.RobotLight(led_count=led_count, led_pin=led_pin, led_brightness=led_bright)
-		RL.start()
-		# Peak/color/speed from robot_config.yaml leds.patterns (max_level, perceptual_ramp, …)
-		try:
-			bc = robot_config.led_pattern_settings().get("breath_color", (55, 55, 200))
-			RL.breath(bc[0], bc[1], bc[2])
-		except Exception:
-			RL.breath(55, 55, 200)
-	except Exception as e:
-		print('Use "sudo pip3 install rpi_ws281x" to install WS_281x package\n使用"sudo pip3 install rpi_ws281x"命令来安装rpi_ws281x')
-		print(e)
-		RL = None
-
-	# Re-bind with lights once WS281x is up
+	# Re-bind with the early-created light driver once Flask is ready.
 	assembly_api.bind_robot(sc=scGear, lights=RL, init_pwm=init_pwm, replace_num=replace_num)
 
 	while  1:
@@ -453,19 +500,18 @@ if __name__ == '__main__':
 			start_server = websockets.serve(main_logic, '0.0.0.0', 8888)
 			asyncio.get_event_loop().run_until_complete(start_server)
 			print('waiting for connection...')
+			_show_startup_progress(6)
+			_schedule_idle_breath()
 			# print('...connected from :', addr)
 			break
 		except Exception as e:
 			print(e)
-			RL.setColor(0,0,0)
-
-		try:
-			RL.setColor(0,80,255)
-		except:
-			pass
+			if RL is not None:
+				RL.setColor(0,0,0)
 	try:
 		asyncio.get_event_loop().run_forever()
-	except Exception as e:
-		print(e)
-		RL.setColor(0,0,0)
+	except Exception:
+		LOGGER.exception('Robot control event loop stopped unexpectedly')
+		if RL is not None:
+			RL.setColor(0,0,0)
 		move.destroy()
