@@ -20,6 +20,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/tracking-panel.css"
   },
   {
+    "revision": "head-joystick-css-20260730a",
+    "url": "/css/head-joystick.css"
+  },
+  {
     "revision": "682fe012989b3f6c68fa",
     "url": "/css/chunk-vendors.d6a48324.css"
   },
@@ -170,6 +174,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
   {
     "revision": "tracking-panel-js-20260730a",
     "url": "/js/tracking-panel.js?v=tracking-20260730"
+  },
+  {
+    "revision": "head-joystick-js-20260730a",
+    "url": "/js/head-joystick.js?v=headjoy-20260730"
   },
   {
     "revision": "682fe012989b3f6c68fa",

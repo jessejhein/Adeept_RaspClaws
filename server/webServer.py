@@ -283,6 +283,67 @@ def switchCtrl(command_input, response):
 		switch.switch(3,0) 
 
 
+def _head_joy_speed(magnitude: float) -> int:
+	"""Map |n| in [0,1] to ServoCtrl wiggle speed (degrees-ish per tick)."""
+	dead = 0.12
+	max_speed = 28
+	min_speed = 3
+	mag = abs(float(magnitude))
+	if mag < dead:
+		return 0
+	t = (mag - dead) / (1.0 - dead)
+	if t > 1.0:
+		t = 1.0
+	return int(round(min_speed + t * (max_speed - min_speed)))
+
+
+def _stop_head_joy() -> None:
+	try:
+		P_sc.stopWiggle()
+	except Exception:
+		pass
+	try:
+		T_sc.stopWiggle()
+	except Exception:
+		pass
+
+
+def _apply_head_joy(command_input: str) -> None:
+	"""Parse headJoy nx ny and drive pan/tilt at proportional speeds."""
+	parts = command_input.split()
+	if len(parts) < 3:
+		_stop_head_joy()
+		return
+	try:
+		nx = max(-1.0, min(1.0, float(parts[1])))
+		ny = max(-1.0, min(1.0, float(parts[2])))
+	except ValueError:
+		_stop_head_joy()
+		return
+
+	pan_speed = _head_joy_speed(nx)
+	tilt_speed = _head_joy_speed(ny)
+
+	if pan_speed <= 0:
+		try:
+			P_sc.stopWiggle()
+		except Exception:
+			pass
+	else:
+		# Match lookleft (+1) / lookright (-1)
+		pan_dir = -1 if nx > 0 else 1
+		P_sc.singleServo(12, pan_dir, pan_speed)
+
+	if tilt_speed <= 0:
+		try:
+			T_sc.stopWiggle()
+		except Exception:
+			pass
+	else:
+		want_up = ny > 0
+		tilt_dir = robot_config.camera_tilt_dir(want_up)
+		T_sc.singleServo(13, tilt_dir, tilt_speed)
+
 def robotCtrl(command_input, response):
 	global direction_command, turn_command
 	if command_input.startswith('gaitTest '):
@@ -342,6 +403,14 @@ def robotCtrl(command_input, response):
 
 	elif 'UDstop' in command_input:
 		T_sc.stopWiggle()
+
+	elif command_input.startswith('headJoy'):
+		# Proportional camera joystick: headJoy <nx> <ny>  (each in [-1, 1]).
+		# nx>0 look right, ny>0 look up. Magnitude maps to wiggle speed.
+		_apply_head_joy(command_input)
+
+	elif 'headJoyStop' == command_input:
+		_stop_head_joy()
 
 
 def configPWM(command_input, response):

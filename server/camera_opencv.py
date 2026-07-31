@@ -125,16 +125,13 @@ class CVThread(threading.Thread):
 
 		# Face / hand tracking state (shared helpers in tracking_cv).
 		self.track_state = tracking_cv.TrackSelectState()
-		self.scan_state = tracking_cv.ScanState()
 		self.track_detections: List[tracking_cv.Detection] = []
 		self.track_selected: Optional[tracking_cv.Detection] = None
-		self.track_scanning = False
 		self.track_status = ""
 		self.hand_backend_ok = False
 		self.hand_unavailable_msg = "Hand tracking unavailable (install mediapipe)"
 		self._face_cascade = None
 		self._face_cascade_failed = False
-		self._last_scan_mono = time.monotonic()
 		self._hand_frame_i = 0
 
 		super(CVThread, self).__init__(*args, **kwargs)
@@ -157,12 +154,9 @@ class CVThread(threading.Thread):
 
 	def _reset_track_mode(self) -> None:
 		self.track_state = tracking_cv.TrackSelectState()
-		self.scan_state = tracking_cv.reset_scan()
 		self.track_detections = []
 		self.track_selected = None
-		self.track_scanning = False
 		self.track_status = ""
-		self._last_scan_mono = time.monotonic()
 
 	def advance_track_target(self) -> None:
 		"""Cycle selected face/hand (wrap). Called from Camera on WS command."""
@@ -174,7 +168,6 @@ class CVThread(threading.Thread):
 			self.track_selected = ordered[idx]
 			self.track_state.last_cx = self.track_selected.cx
 			self.track_state.last_cy = self.track_selected.cy
-			self.track_scanning = False
 			self.track_status = f"Target {idx + 1}/{count}"
 
 	def _ensure_face_cascade(self):
@@ -194,56 +187,75 @@ class CVThread(threading.Thread):
 		LOGGER.info("Loaded face cascade from %s", path)
 		return self._face_cascade
 
+	def _track_aim_point(self, det: tracking_cv.Detection) -> tuple[int, int]:
+		"""Image point to center on.
+
+		Faces aim at the upper third (near eyes) so the head tilts high enough
+		to keep a standing person in frame; hands use geometric center.
+		"""
+		if self.CVMode == "faceTrack":
+			# 0.0 = top of box, 1.0 = bottom. Eyes are typically ~0.30–0.40.
+			return det.cx, int(det.y + det.h * 0.32)
+		return det.cx, det.cy
+
 	def _apply_servo_to_point(self, target_x: int, target_y: int) -> None:
+		"""Pan/tilt toward a target with stronger vertical gain than color mode."""
 		error_Y = 240 - int(target_y)
 		error_X = 320 - int(target_x)
+		# More aggressive than stock color-track gains so tall/high faces catch up.
+		pan_gain = 0.22
+		tilt_gain = 0.42
+		pan_deadzone = 18
+		tilt_deadzone = 14
 		try:
-			CVThread.servoMove(CVThread.P_servo, CVThread.P_direction, -error_X)
-			CVThread.servoMove(CVThread.T_servo, CVThread.T_direction, -error_Y)
+			err_x = CVThread.kalman_filter_X.kalman(-error_X * CVThread.P_direction)
+			err_y = CVThread.kalman_filter_Y.kalman(-error_Y * CVThread.T_direction)
+			if abs(error_X) > pan_deadzone:
+				CVThread.P_anglePos += (
+					pan_gain * err_x * CVThread.cameraDiagonalW / CVThread.videoW
+				)
+				# Allow a wide look-around so tracking is not soft-clipped early.
+				CVThread.P_anglePos = max(-80.0, min(80.0, CVThread.P_anglePos))
+				CVThread.scGear.moveAngle(CVThread.P_servo, CVThread.P_anglePos)
+				CVThread.X_lock = 0
+			else:
+				CVThread.X_lock = 1
+			if abs(error_Y) > tilt_deadzone:
+				CVThread.T_anglePos += (
+					tilt_gain * err_y * CVThread.cameraDiagonalH / CVThread.videoH
+				)
+				# Extra headroom on tilt so the camera can look higher/lower.
+				CVThread.T_anglePos = max(-70.0, min(70.0, CVThread.T_anglePos))
+				CVThread.scGear.moveAngle(CVThread.T_servo, CVThread.T_anglePos)
+				CVThread.Y_lock = 0
+			else:
+				CVThread.Y_lock = 1
 		except Exception:
 			LOGGER.exception("Servo move failed during track; continuing video stream.")
 
-	def _apply_scan_servos(self) -> None:
-		now = time.monotonic()
-		dt = now - self._last_scan_mono
-		self._last_scan_mono = now
-		self.scan_state = tracking_cv.scan_step(self.scan_state, dt)
-		# Absolute angles from init (same units as color-tracking moveAngle).
-		CVThread.P_anglePos = self.scan_state.pan_angle
-		CVThread.T_anglePos = self.scan_state.tilt_angle
-		try:
-			CVThread.scGear.moveAngle(CVThread.P_servo, CVThread.P_anglePos)
-			CVThread.scGear.moveAngle(CVThread.T_servo, CVThread.T_anglePos)
-		except Exception:
-			LOGGER.exception("Servo scan move failed; continuing video stream.")
-
 	def _update_track_from_detections(self, detections: List[tracking_cv.Detection]) -> None:
 		self.track_detections = tracking_cv.sort_detections(detections)
-		selected, self.track_state, should_scan = tracking_cv.pick_target(
+		# Scan-on-miss disabled: hold last pose and wait for a target again.
+		selected, self.track_state, _should_scan = tracking_cv.pick_target(
 			self.track_detections,
 			self.track_state,
+			miss_threshold=10**9,  # never enter scan from pick_target
 		)
 		self.track_selected = selected
-		self.track_scanning = should_scan
 		n = len(self.track_detections)
 		if selected is not None:
-			self.scan_state = tracking_cv.reset_scan(self.scan_state)
-			self._last_scan_mono = time.monotonic()
 			idx = self.track_state.index + 1 if n else 0
 			self.track_status = f"Target {idx}/{n}"
-			self._apply_servo_to_point(selected.cx, selected.cy)
-		elif should_scan:
-			self.track_status = "Scanning…"
-			self._apply_scan_servos()
+			aim_x, aim_y = self._track_aim_point(selected)
+			self._apply_servo_to_point(aim_x, aim_y)
 		else:
-			self.track_status = "Acquiring…"
+			self.track_status = "No target"
 
 	def faceTrack(self, frame_image) -> None:
 		cascade = self._ensure_face_cascade()
 		if cascade is None:
 			self.track_detections = []
 			self.track_selected = None
-			self.track_scanning = False
 			self.track_status = "Face cascade missing"
 			self.pause()
 			return
@@ -254,11 +266,12 @@ class CVThread(threading.Thread):
 		small = cv2.resize(frame_image, (0, 0), fx=scale, fy=scale) if scale != 1.0 else frame_image
 		gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 		gray = cv2.equalizeHist(gray)
-		min_side = max(30, int(60 * scale))
+		# Smaller min size catches farther faces; slightly lower neighbors for recall.
+		min_side = max(24, int(48 * scale))
 		rects = cascade.detectMultiScale(
 			gray,
-			scaleFactor=1.1,
-			minNeighbors=5,
+			scaleFactor=1.08,
+			minNeighbors=4,
 			minSize=(min_side, min_side),
 			flags=cv2.CASCADE_SCALE_IMAGE,
 		)
@@ -282,7 +295,6 @@ class CVThread(threading.Thread):
 			self.hand_backend_ok = False
 			self.track_detections = []
 			self.track_selected = None
-			self.track_scanning = False
 			self.track_status = self.hand_unavailable_msg
 			self.pause()
 			return
@@ -352,13 +364,18 @@ class CVThread(threading.Thread):
 				cv2.LINE_AA,
 			)
 			status = self.track_status or ''
+			status_color = (
+				(200, 255, 200)
+				if self.track_selected is not None
+				else (200, 200, 120)
+			)
 			cv2.putText(
 				imgInput,
 				status[:64],
 				(20, 52),
 				CVThread.font,
 				0.5,
-				(200, 255, 200) if not self.track_scanning else (180, 180, 255),
+				status_color,
 				1,
 				cv2.LINE_AA,
 			)
@@ -395,9 +412,10 @@ class CVThread(threading.Thread):
 					cv2.LINE_AA,
 				)
 			if self.track_selected is not None:
+				aim_x, aim_y = self._track_aim_point(self.track_selected)
 				cv2.drawMarker(
 					imgInput,
-					(self.track_selected.cx, self.track_selected.cy),
+					(aim_x, aim_y),
 					(0, 255, 255),
 					markerType=cv2.MARKER_CROSS,
 					markerSize=12,
