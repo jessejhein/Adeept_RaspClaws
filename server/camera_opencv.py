@@ -7,7 +7,7 @@ import logging
 import threading
 import time
 from collections.abc import Iterator
-from typing import ClassVar
+from typing import ClassVar, List, Optional
 
 import cv2
 import imutils
@@ -17,6 +17,7 @@ import move
 import numpy as np
 import PID
 import RPIservo
+import tracking_cv
 from base_camera import BaseCamera, FrameMetrics
 from picamera2 import Picamera2
 
@@ -37,6 +38,40 @@ findLineError = 160
 Threshold = 80 
 colorUpper = np.array([44, 255, 255])
 colorLower = np.array([24, 100, 100])
+
+# Optional MediaPipe Hands (heavy; may be absent on some Pi images).
+_mp_hands = None
+_mp_solutions = None
+_MEDIAPIPE_IMPORT_TRIED = False
+_MEDIAPIPE_AVAILABLE = False
+
+
+def _ensure_mediapipe() -> bool:
+	"""Lazy-import MediaPipe Hands once; return True if usable."""
+	global _mp_hands, _mp_solutions, _MEDIAPIPE_IMPORT_TRIED, _MEDIAPIPE_AVAILABLE
+	if _MEDIAPIPE_IMPORT_TRIED:
+		return _MEDIAPIPE_AVAILABLE
+	_MEDIAPIPE_IMPORT_TRIED = True
+	try:
+		import mediapipe as mp  # type: ignore
+
+		_mp_solutions = mp.solutions
+		_mp_hands = mp.solutions.hands.Hands(
+			static_image_mode=False,
+			max_num_hands=4,
+			model_complexity=0,
+			min_detection_confidence=0.5,
+			min_tracking_confidence=0.5,
+		)
+		_MEDIAPIPE_AVAILABLE = True
+		LOGGER.info("MediaPipe Hands available for hand tracking.")
+	except Exception as error:  # pragma: no cover - environment specific
+		_MEDIAPIPE_AVAILABLE = False
+		LOGGER.warning(
+			"MediaPipe Hands unavailable (%s); hand tracking will show an overlay notice.",
+			error,
+		)
+	return _MEDIAPIPE_AVAILABLE
 
 class CVThread(threading.Thread):
 	font = cv2.FONT_HERSHEY_SIMPLEX
@@ -88,6 +123,20 @@ class CVThread(threading.Thread):
 
 		self.center = None
 
+		# Face / hand tracking state (shared helpers in tracking_cv).
+		self.track_state = tracking_cv.TrackSelectState()
+		self.scan_state = tracking_cv.ScanState()
+		self.track_detections: List[tracking_cv.Detection] = []
+		self.track_selected: Optional[tracking_cv.Detection] = None
+		self.track_scanning = False
+		self.track_status = ""
+		self.hand_backend_ok = False
+		self.hand_unavailable_msg = "Hand tracking unavailable (install mediapipe)"
+		self._face_cascade = None
+		self._face_cascade_failed = False
+		self._last_scan_mono = time.monotonic()
+		self._hand_frame_i = 0
+
 		super(CVThread, self).__init__(*args, **kwargs)
 		self.__flag = threading.Event()
 		self.__flag.clear()
@@ -100,9 +149,180 @@ class CVThread(threading.Thread):
 		self.cnts = None
 
 	def mode(self, invar, imgInput):
+		if invar != self.CVMode and invar in ('faceTrack', 'handTrack'):
+			self._reset_track_mode()
 		self.CVMode = invar
 		self.imgCV = imgInput
 		self.resume()
+
+	def _reset_track_mode(self) -> None:
+		self.track_state = tracking_cv.TrackSelectState()
+		self.scan_state = tracking_cv.reset_scan()
+		self.track_detections = []
+		self.track_selected = None
+		self.track_scanning = False
+		self.track_status = ""
+		self._last_scan_mono = time.monotonic()
+
+	def advance_track_target(self) -> None:
+		"""Cycle selected face/hand (wrap). Called from Camera on WS command."""
+		count = len(self.track_detections)
+		self.track_state = tracking_cv.cycle_target(self.track_state, count)
+		if count:
+			ordered = tracking_cv.sort_detections(self.track_detections)
+			idx = self.track_state.index % count
+			self.track_selected = ordered[idx]
+			self.track_state.last_cx = self.track_selected.cx
+			self.track_state.last_cy = self.track_selected.cy
+			self.track_scanning = False
+			self.track_status = f"Target {idx + 1}/{count}"
+
+	def _ensure_face_cascade(self):
+		if self._face_cascade is not None or self._face_cascade_failed:
+			return self._face_cascade
+		path = tracking_cv.resolve_haar_cascade_path()
+		if not path:
+			LOGGER.error("Haar frontal-face cascade not found; face tracking disabled.")
+			self._face_cascade_failed = True
+			return None
+		cascade = cv2.CascadeClassifier(path)
+		if cascade.empty():
+			LOGGER.error("Failed to load Haar cascade from %s", path)
+			self._face_cascade_failed = True
+			return None
+		self._face_cascade = cascade
+		LOGGER.info("Loaded face cascade from %s", path)
+		return self._face_cascade
+
+	def _apply_servo_to_point(self, target_x: int, target_y: int) -> None:
+		error_Y = 240 - int(target_y)
+		error_X = 320 - int(target_x)
+		try:
+			CVThread.servoMove(CVThread.P_servo, CVThread.P_direction, -error_X)
+			CVThread.servoMove(CVThread.T_servo, CVThread.T_direction, -error_Y)
+		except Exception:
+			LOGGER.exception("Servo move failed during track; continuing video stream.")
+
+	def _apply_scan_servos(self) -> None:
+		now = time.monotonic()
+		dt = now - self._last_scan_mono
+		self._last_scan_mono = now
+		self.scan_state = tracking_cv.scan_step(self.scan_state, dt)
+		# Absolute angles from init (same units as color-tracking moveAngle).
+		CVThread.P_anglePos = self.scan_state.pan_angle
+		CVThread.T_anglePos = self.scan_state.tilt_angle
+		try:
+			CVThread.scGear.moveAngle(CVThread.P_servo, CVThread.P_anglePos)
+			CVThread.scGear.moveAngle(CVThread.T_servo, CVThread.T_anglePos)
+		except Exception:
+			LOGGER.exception("Servo scan move failed; continuing video stream.")
+
+	def _update_track_from_detections(self, detections: List[tracking_cv.Detection]) -> None:
+		self.track_detections = tracking_cv.sort_detections(detections)
+		selected, self.track_state, should_scan = tracking_cv.pick_target(
+			self.track_detections,
+			self.track_state,
+		)
+		self.track_selected = selected
+		self.track_scanning = should_scan
+		n = len(self.track_detections)
+		if selected is not None:
+			self.scan_state = tracking_cv.reset_scan(self.scan_state)
+			self._last_scan_mono = time.monotonic()
+			idx = self.track_state.index + 1 if n else 0
+			self.track_status = f"Target {idx}/{n}"
+			self._apply_servo_to_point(selected.cx, selected.cy)
+		elif should_scan:
+			self.track_status = "Scanning…"
+			self._apply_scan_servos()
+		else:
+			self.track_status = "Acquiring…"
+
+	def faceTrack(self, frame_image) -> None:
+		cascade = self._ensure_face_cascade()
+		if cascade is None:
+			self.track_detections = []
+			self.track_selected = None
+			self.track_scanning = False
+			self.track_status = "Face cascade missing"
+			self.pause()
+			return
+
+		# Detect on a smaller gray frame for speed; scale boxes back.
+		h, w = frame_image.shape[:2]
+		scale = 0.5 if w >= 480 else 1.0
+		small = cv2.resize(frame_image, (0, 0), fx=scale, fy=scale) if scale != 1.0 else frame_image
+		gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+		gray = cv2.equalizeHist(gray)
+		min_side = max(30, int(60 * scale))
+		rects = cascade.detectMultiScale(
+			gray,
+			scaleFactor=1.1,
+			minNeighbors=5,
+			minSize=(min_side, min_side),
+			flags=cv2.CASCADE_SCALE_IMAGE,
+		)
+		scaled = []
+		inv = 1.0 / scale
+		for (x, y, bw, bh) in rects:
+			scaled.append(
+				(
+					int(x * inv),
+					int(y * inv),
+					int(bw * inv),
+					int(bh * inv),
+				)
+			)
+		detections = tracking_cv.detections_from_face_rects(scaled)
+		self._update_track_from_detections(detections)
+		self.pause()
+
+	def handTrack(self, frame_image) -> None:
+		if not _ensure_mediapipe() or _mp_hands is None:
+			self.hand_backend_ok = False
+			self.track_detections = []
+			self.track_selected = None
+			self.track_scanning = False
+			self.track_status = self.hand_unavailable_msg
+			self.pause()
+			return
+
+		self.hand_backend_ok = True
+		self._hand_frame_i += 1
+		h, w = frame_image.shape[:2]
+		# Picamera2 RGB888 frames; MediaPipe expects RGB.
+		rgb = frame_image
+		if rgb.shape[2] == 4:
+			rgb = cv2.cvtColor(rgb, cv2.COLOR_BGRA2RGB)
+		# camera_opencv uses RGB888 from Picamera2; OpenCV draw paths treat
+		# arrays as BGR for overlays elsewhere — keep MediaPipe on RGB.
+		results = _mp_hands.process(rgb)
+		detections: List[tracking_cv.Detection] = []
+		if results.multi_hand_landmarks:
+			handedness_list = results.multi_handedness or []
+			for i, hand_lms in enumerate(results.multi_hand_landmarks):
+				coords = [(lm.x, lm.y, lm.z) for lm in hand_lms.landmark]
+				label = "Right"
+				if i < len(handedness_list):
+					label = handeness_list_label(handedness_list[i])
+				x, y, bw, bh = tracking_cv.hand_bbox_from_landmarks(coords, w, h)
+				fingers = tracking_cv.count_fingers(coords, w, h, label)
+				pose = tracking_cv.classify_hand_pose(
+					fingers, coords, w, h, label
+				)
+				detections.append(
+					tracking_cv.Detection(
+						x=x,
+						y=y,
+						w=bw,
+						h=bh,
+						label=label,
+						fingers=fingers,
+						pose=pose,
+					)
+				)
+		self._update_track_from_detections(detections)
+		self.pause()
 
 	def elementDraw(self,imgInput):
 		if self.CVMode == 'none':
@@ -118,6 +338,71 @@ class CVThread(threading.Thread):
 
 			if self.radius > 10 and self.drawing:
 				cv2.rectangle(imgInput,(int(self.box_x-self.radius),int(self.box_y+self.radius)),(int(self.box_x+self.radius),int(self.box_y-self.radius)),(255,255,255),1)
+
+		elif self.CVMode in ('faceTrack', 'handTrack'):
+			mode_title = 'Face Track' if self.CVMode == 'faceTrack' else 'Hand Track'
+			cv2.putText(
+				imgInput,
+				mode_title,
+				(20, 28),
+				CVThread.font,
+				0.6,
+				(255, 255, 255),
+				1,
+				cv2.LINE_AA,
+			)
+			status = self.track_status or ''
+			cv2.putText(
+				imgInput,
+				status[:64],
+				(20, 52),
+				CVThread.font,
+				0.5,
+				(200, 255, 200) if not self.track_scanning else (180, 180, 255),
+				1,
+				cv2.LINE_AA,
+			)
+			n = len(self.track_detections)
+			for i, det in enumerate(self.track_detections):
+				is_sel = (
+					self.track_selected is not None
+					and det.cx == self.track_selected.cx
+					and det.cy == self.track_selected.cy
+					and det.w == self.track_selected.w
+				)
+				color = (0, 255, 128) if is_sel else (160, 160, 160)
+				thickness = 2 if is_sel else 1
+				cv2.rectangle(
+					imgInput,
+					(det.x, det.y),
+					(det.x + det.w, det.y + det.h),
+					color,
+					thickness,
+				)
+				tag = f"{i + 1}/{n}"
+				if self.CVMode == 'handTrack':
+					extra = tracking_cv.pose_display_text(det)
+					if extra:
+						tag = f"{tag} {extra}"
+				cv2.putText(
+					imgInput,
+					tag,
+					(det.x, max(16, det.y - 6)),
+					CVThread.font,
+					0.45,
+					color,
+					1,
+					cv2.LINE_AA,
+				)
+			if self.track_selected is not None:
+				cv2.drawMarker(
+					imgInput,
+					(self.track_selected.cx, self.track_selected.cy),
+					(0, 255, 255),
+					markerType=cv2.MARKER_CROSS,
+					markerSize=12,
+					thickness=1,
+				)
 
 		elif self.CVMode == 'findlineCV':
 			if frameRender:
@@ -322,7 +607,23 @@ class CVThread(threading.Thread):
 				self.CVThreading = 1
 				self.watchDog(self.imgCV)
 				self.CVThreading = 0
+			elif self.CVMode == 'faceTrack':
+				self.CVThreading = 1
+				self.faceTrack(self.imgCV)
+				self.CVThreading = 0
+			elif self.CVMode == 'handTrack':
+				self.CVThreading = 1
+				self.handTrack(self.imgCV)
+				self.CVThreading = 0
 			pass
+
+
+def handeness_list_label(handedness_item) -> str:
+	"""Extract Left/Right label from a MediaPipe handedness classification."""
+	try:
+		return handedness_item.classification[0].label
+	except Exception:
+		return "Right"
 
 
 class Camera(BaseCamera):
@@ -332,6 +633,9 @@ class Camera(BaseCamera):
     modeSelect: ClassVar[str] = "none"
     stream_fps: ClassVar[int] = 15
     jpeg_quality: ClassVar[int] = 75
+    # Request Next target; consumed by the frames() loop on the CV worker.
+    next_target_flag: ClassVar[bool] = False
+    _cv_thread: ClassVar[Optional[CVThread]] = None
 
     def colorFindSet(self, invarH, invarS, invarV):
         global colorUpper, colorLower
@@ -365,6 +669,17 @@ class Camera(BaseCamera):
 
     def modeSet(self, invar):
         Camera.modeSelect = invar
+
+    def nextTrackTarget(self) -> None:
+        """Cycle the active face/hand when multiple detections exist."""
+        Camera.next_target_flag = True
+        cvt = Camera._cv_thread
+        if cvt is not None and Camera.modeSelect in ("faceTrack", "handTrack"):
+            try:
+                cvt.advance_track_target()
+                Camera.next_target_flag = False
+            except Exception:
+                LOGGER.exception("nextTrackTarget failed")
 
     def CVRunSet(self, invar):
         global CVRun
@@ -445,6 +760,7 @@ class Camera(BaseCamera):
             ) from error
 
         cvt = CVThread()
+        Camera._cv_thread = cvt
         cvt.start()
         previous_capture_at: float | None = None
         measured_fps = 0.0
@@ -464,6 +780,14 @@ class Camera(BaseCamera):
                     )
                     camera_error_reported = True
                 continue
+
+            if Camera.next_target_flag:
+                Camera.next_target_flag = False
+                if Camera.modeSelect in ("faceTrack", "handTrack"):
+                    try:
+                        cvt.advance_track_target()
+                    except Exception:
+                        LOGGER.exception("nextTrackTarget apply failed")
 
             if Camera.modeSelect == 'none':
                 cvt.pause()

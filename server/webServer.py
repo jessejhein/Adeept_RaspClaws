@@ -220,6 +220,18 @@ def functionSelect(command_input, response):
 	elif 'findColor' == command_input:
 		flask_app.modeselect('findColor')
 
+	elif 'faceTrack' == command_input:
+		flask_app.modeselect('faceTrack')
+
+	elif 'handTrack' == command_input:
+		flask_app.modeselect('handTrack')
+
+	elif 'nextTrackTarget' == command_input:
+		try:
+			flask_app.camera.nextTrackTarget()
+		except Exception:
+			pass
+
 	elif 'motionGet' == command_input:
 		flask_app.modeselect('watchDog')
 

@@ -16,6 +16,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/gait-test.css"
   },
   {
+    "revision": "tracking-panel-css-20260730a",
+    "url": "/css/tracking-panel.css"
+  },
+  {
     "revision": "682fe012989b3f6c68fa",
     "url": "/css/chunk-vendors.d6a48324.css"
   },
@@ -162,6 +166,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
   {
     "revision": "gait-test-js-20260729a",
     "url": "/js/gait-test-panel.js"
+  },
+  {
+    "revision": "tracking-panel-js-20260730a",
+    "url": "/js/tracking-panel.js?v=tracking-20260730"
   },
   {
     "revision": "682fe012989b3f6c68fa",
