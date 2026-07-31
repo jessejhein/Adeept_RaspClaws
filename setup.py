@@ -105,7 +105,7 @@ commands_pip_1 = [
 "sudo pip3 install adafruit-circuitpython-ads7830",
 "sudo pip3 install rpi_ws281x",
 "sudo pip3 install PyYAML",
-"sudo pip3 install mediapipe",  # optional hand tracking
+"sudo pip3 install mediapipe==0.10.18",  # optional hand tracking (solutions API)
 ]
 commands_pip_2 = [
 "sudo pip3 install adafruit-pca9685 --break-system-packages",
@@ -119,7 +119,7 @@ commands_pip_2 = [
 "sudo pip3 install adafruit-circuitpython-ads7830 --break-system-packages",
 "sudo pip3 install rpi_ws281x --break-system-packages",
 "sudo pip3 install PyYAML --break-system-packages",
-"sudo pip3 install mediapipe --break-system-packages",  # optional hand tracking
+"sudo pip3 install mediapipe==0.10.18 --break-system-packages",  # optional hand tracking (solutions API)
 ]
 mark_pip = 0
 OS_version = check_raspbain_version()
