@@ -175,8 +175,21 @@
 }
 
 .assembly-table td.actions .btn-nudge {
-  font-variant-numeric: tabular-nums;
-  padding: 3px 5px;
+	font-variant-numeric: tabular-nums;
+	padding: 3px 5px;
+}
+
+.motor-relaxed {
+	color: #ffcc80;
+	font-size: 10px;
+	font-style: normal;
+}
+
+.assembly-motor-hint {
+	margin: 7px 0 0;
+	color: #8b95a5;
+	font-size: 11px;
+	line-height: 1.35;
 }
 
 .assembly-led-grid {

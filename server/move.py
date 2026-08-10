@@ -590,6 +590,23 @@ def stand():
 		pwm.set_pwm(ch, 0, int(center))
 
 
+def set_leg_tap(knee_channel: int, *, is_left: bool, lifted: bool) -> None:
+	"""Raise or lower one calibrated knee for a stationary dance move.
+
+	The channel is logical, so configured channel remaps and PWM limits apply.
+	Only the selected knee moves; the other five legs remain at their centers.
+	"""
+	center = getattr(RPIservo, 'init_pwm%d' % knee_channel, 300)
+	height_direction = leftSide_height if is_left else rightSide_height
+	calibration = _servo_calibration(
+		channel=knee_channel,
+		center_pwm=center,
+		direction=height_direction,
+	)
+	offset = gait_config.lift_pwm if lifted else 0
+	_write_gait_pwm(knee_channel, gait.calibrated_pwm(calibration, offset))
+
+
 '''
 ---Dove---
 making the servo moves smooth.

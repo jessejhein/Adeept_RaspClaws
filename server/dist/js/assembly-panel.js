@@ -60,7 +60,8 @@
         "<td title=\"logical id → physical HAT port\">" + chNote + "</td>" +
         "<td>" + escapeHtml(jointLabel(m.joint)) + "</td>" +
         "<td class=\"center\">" + m.center + "</td>" +
-        "<td class=\"current\">" + m.current + "</td>" +
+        "<td class=\"current\" title=\"Last commanded PWM; this is not physical position feedback\">" + m.current +
+          (m.relaxed ? " <em class=\"motor-relaxed\">relaxed</em>" : "") + "</td>" +
         "<td class=\"deg\">" + m.degrees_from_center + "°</td>" +
         "<td class=\"lim\">" + lim + "</td>" +
         "<td class=\"actions\">" +
@@ -69,7 +70,9 @@
           "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"1\">+1</button>" +
           "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"5\">+5</button> " +
           "<button type=\"button\" class=\"btn-test\" data-id=\"" + m.id + "\">Test</button> " +
-          "<button type=\"button\" class=\"btn-center\" data-id=\"" + m.id + "\" title=\"Set center to current position\">Set center</button>" +
+          "<button type=\"button\" class=\"btn-center\" data-id=\"" + m.id + "\" title=\"Set center to current commanded position\">Set center</button> " +
+          "<button type=\"button\" class=\"btn-limit\" data-id=\"" + m.id + "\" data-limit=\"min\" title=\"Save current commanded PWM as the minimum stop\">Set min</button> " +
+          "<button type=\"button\" class=\"btn-limit\" data-id=\"" + m.id + "\" data-limit=\"max\" title=\"Save current commanded PWM as the maximum stop\">Set max</button>" +
         "</td>" +
         "</tr>";
     });
@@ -234,7 +237,7 @@
           var cur = row.querySelector(".current");
           var deg = row.querySelector(".deg");
           var cen = row.querySelector(".center");
-          if (cur) cur.textContent = m.current;
+          if (cur) cur.innerHTML = String(m.current) + (m.relaxed ? " <em class=\"motor-relaxed\">relaxed</em>" : "");
           if (deg) deg.textContent = m.degrees_from_center + "°";
           if (cen) cen.textContent = m.center;
         });
@@ -306,6 +309,13 @@
         "<button type=\"button\" id=\"assembly-home\">Home all</button>" +
         "<button type=\"button\" id=\"assembly-test-shoulders\">Test shoulders</button>" +
         "<button type=\"button\" id=\"assembly-test-knees\">Test knees</button>" +
+		"<button type=\"button\" class=\"assembly-relax\" data-group=\"front_left\">Relax FL</button>" +
+		"<button type=\"button\" class=\"assembly-relax\" data-group=\"mid_left\">Relax ML</button>" +
+		"<button type=\"button\" class=\"assembly-relax\" data-group=\"rear_left\">Relax RL</button>" +
+		"<button type=\"button\" class=\"assembly-relax\" data-group=\"rear_right\">Relax RR</button>" +
+		"<button type=\"button\" class=\"assembly-relax\" data-group=\"mid_right\">Relax MR</button>" +
+		"<button type=\"button\" class=\"assembly-relax\" data-group=\"front_right\">Relax FR</button>" +
+		"<button type=\"button\" class=\"assembly-relax\" data-group=\"head\">Relax head</button>" +
         "<button type=\"button\" id=\"assembly-save\">Save config</button>" +
         "<button type=\"button\" id=\"assembly-leds-off\">All LEDs off</button>" +
         "<button type=\"button\" id=\"assembly-leds-breath\">Resume breath</button>" +
@@ -314,10 +324,11 @@
         "<h4>Motors</h4>" +
         "<table class=\"assembly-table\">" +
           "<thead><tr>" +
-            "<th>Name</th><th>Port</th><th>Joint</th><th>Center</th><th>Current</th><th>Est. °</th><th>Min/Max</th><th>Nudge / Test</th>" +
+            "<th>Name</th><th>Port</th><th>Joint</th><th>Center</th><th>Commanded</th><th>Est. °</th><th>Min/Max</th><th>Move / limits</th>" +
           "</tr></thead>" +
-          "<tbody id=\"assembly-motor-body\"></tbody>" +
+        "<tbody id=\"assembly-motor-body\"></tbody>" +
         "</table>" +
+		"<p class=\"assembly-motor-hint\">Relax turns PWM holding power off so joints can be moved by hand. “Commanded” is the last software PWM, not a physical readback. Move ± changes only the command; Set min/max saves that command immediately.</p>" +
         "<h4>LEDs</h4>" +
         "<div id=\"assembly-pattern-bar\" class=\"assembly-pattern-bar\"></div>" +
         "<p class=\"assembly-led-hint\">Brightness 0–255 (decimal). Interior LEDs are not line-of-sight — " +
@@ -356,6 +367,15 @@
         });
       });
     });
+
+	panel.querySelectorAll(".assembly-relax").forEach(function (button) {
+		button.addEventListener("click", function () {
+			var group = button.getAttribute("data-group");
+			runAction("Toggle relax " + group, function () {
+				return api("/api/assembly/relax", { method: "POST", body: JSON.stringify({ group: group }) });
+			});
+		});
+	});
 
     $("#assembly-save", panel).addEventListener("click", function () {
       runAction("Save config", function () {
@@ -434,10 +454,18 @@
       if (t.classList.contains("btn-nudge")) {
         var nid = t.getAttribute("data-id");
         var delta = parseInt(t.getAttribute("data-delta"), 10);
-        runAction("Nudge " + nid + " " + (delta > 0 ? "+" : "") + delta, function () {
-          return api("/api/assembly/motors/" + nid + "/nudge", {
+        var row = t.closest("tr");
+        var current = row && row.querySelector(".current");
+        var base = current ? parseInt(current.textContent, 10) : NaN;
+        if (!Number.isFinite(base)) {
+          setStatus("Could not read current command", true);
+          return;
+        }
+        var target = base + delta;
+        runAction("Move " + nid + " → " + target, function () {
+          return api("/api/assembly/motors/" + nid + "/position", {
             method: "POST",
-            body: JSON.stringify({ delta: delta })
+            body: JSON.stringify({ pwm: target })
           });
         });
         return;
@@ -464,6 +492,18 @@
         });
         return;
       }
+
+		if (t.classList.contains("btn-limit")) {
+			var limitId = t.getAttribute("data-id");
+			var limit = t.getAttribute("data-limit");
+			runAction("Set " + limit + " " + limitId, function () {
+				return api("/api/assembly/motors/" + limitId + "/limit", {
+					method: "POST",
+					body: JSON.stringify({ limit: limit })
+				});
+			});
+			return;
+		}
 
       if (t.getAttribute("data-led") != null) {
         var led = t.getAttribute("data-led");

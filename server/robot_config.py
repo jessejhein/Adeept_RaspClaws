@@ -317,6 +317,36 @@ def set_motor_center(motor_id: int, center: int, cfg: Optional[Dict[str, Any]] =
 	return cfg
 
 
+def set_motor_limit(
+	motor_id: int, limit: str, value: int, cfg: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+	"""Set one numeric PWM stop while preserving a valid center/min/max range."""
+	if limit not in ("min", "max"):
+		raise ValueError("limit must be 'min' or 'max'")
+	cfg = cfg or get_config()
+	motor = motor_by_id(motor_id, cfg)
+	if motor is None:
+		raise ValueError("unknown motor")
+	meta = cfg.get("meta") or {}
+	value = max(int(meta.get("ctrl_range_min", 100)), min(int(meta.get("ctrl_range_max", 560)), int(value)))
+	other = motor.get("max" if limit == "min" else "min")
+	if other is not None:
+		if limit == "min" and value > int(other):
+			raise ValueError("minimum cannot exceed maximum")
+		if limit == "max" and value < int(other):
+			raise ValueError("maximum cannot be below minimum")
+	center = int(motor["center"])
+	if limit == "min" and value > center:
+		raise ValueError("minimum cannot be above the center")
+	if limit == "max" and value < center:
+		raise ValueError("maximum cannot be below the center")
+	motor[limit] = value
+	with _lock:
+		global _config
+		_config = cfg
+	return cfg
+
+
 def sync_centers_from_list(centers: List[int], cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 	cfg = cfg or get_config()
 	for m in cfg["motors"]:

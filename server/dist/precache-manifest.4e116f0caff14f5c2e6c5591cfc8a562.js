@@ -8,12 +8,16 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/ui-polish.css"
   },
   {
-    "revision": "assembly-panel-css-20260727f",
+    "revision": "assembly-panel-css-20260809a",
     "url": "/css/assembly-panel.css"
   },
   {
     "revision": "gait-test-css-20260729a",
     "url": "/css/gait-test.css"
+  },
+  {
+    "revision": "dance-panel-css-20260809a",
+    "url": "/css/dance-panel.css"
   },
   {
     "revision": "tracking-panel-css-20260730a",
@@ -144,7 +148,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/img/bg.jpg"
   },
   {
-    "revision": "566fa6b17f48c1843d79b912644470e2",
+    "revision": "dance-index-20260809a",
     "url": "/index.html"
   },
   {
@@ -160,7 +164,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/js/ui-text-polish.js"
   },
   {
-    "revision": "assembly-panel-js-20260727f",
+    "revision": "assembly-panel-js-20260809a",
     "url": "/js/assembly-panel.js"
   },
   {
@@ -170,6 +174,10 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
   {
     "revision": "gait-test-js-20260729a",
     "url": "/js/gait-test-panel.js"
+  },
+  {
+    "revision": "dance-panel-js-20260809a",
+    "url": "/js/dance-panel.js?v=dance-20260809"
   },
   {
     "revision": "tracking-panel-js-20260730a",

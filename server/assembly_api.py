@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from flask import jsonify, request
 
 import robot_config
+import RPIservo
 
 _state: Dict[str, Any] = {
 	"sc": None,
@@ -18,6 +19,10 @@ _state: Dict[str, Any] = {
 	"init_pwm": None,
 	"replace_num": None,
 	"test_lock": threading.Lock(),
+	"pause_motion": None,
+	"limits_updated": None,
+	"head_controllers": (),
+	"relaxed_ids": set(),
 	"led_state": {},  # id -> {on, r, g, b, brightness 0-255}
 	"pattern": None,  # active pattern name or None
 	"pattern_lock": threading.Lock(),
@@ -32,11 +37,15 @@ BACK_IN = [9, 10, 11]
 ALL_INTERIOR = FRONT_IN + BACK_IN
 
 
-def bind_robot(sc=None, lights=None, init_pwm=None, replace_num=None) -> None:
+def bind_robot(sc=None, lights=None, init_pwm=None, replace_num=None, pause_motion=None,
+			   limits_updated=None, head_controllers=()) -> None:
 	_state["sc"] = sc
 	_state["lights"] = lights
 	_state["init_pwm"] = init_pwm
 	_state["replace_num"] = replace_num
+	_state["pause_motion"] = pause_motion
+	_state["limits_updated"] = limits_updated
+	_state["head_controllers"] = tuple(head_controllers or ())
 
 
 def _sc():
@@ -119,9 +128,38 @@ def _motor_status_list():
 			"max": m.get("max"),
 			"invert": bool(m.get("invert", False)),
 			"enabled": bool(m.get("enabled", True)),
+			"relaxed": i in _state["relaxed_ids"],
 			"degrees_from_center": robot_config.pwm_to_degrees(current, center, m, meta),
 		})
 	return rows
+
+
+def _activate_motor(motor_id: int) -> None:
+	"""A new command re-enables a motor previously released for hand positioning."""
+	_state["relaxed_ids"].discard(int(motor_id))
+
+
+def _set_controller_limits(sc, motor_id: int, motor: Dict[str, Any], meta: Dict[str, Any]) -> None:
+	"""Keep ServoCtrl's runtime stops aligned with the saved YAML configuration."""
+	if motor_id < len(sc.minPos):
+		sc.minPos[motor_id] = robot_config.effective_min(motor, meta)
+	if motor_id < len(sc.maxPos):
+		sc.maxPos[motor_id] = robot_config.effective_max(motor, meta)
+
+
+def _relax_ids(ids: List[int]) -> None:
+	"""Stop PWM pulses for selected logical channels without changing their command values."""
+	pause_motion = _state.get("pause_motion")
+	if callable(pause_motion):
+		pause_motion()
+	for controller in _state.get("head_controllers", ()):
+		try:
+			controller.stopWiggle()
+		except Exception:
+			pass
+	for motor_id in ids:
+		RPIservo.pwm.set_pwm(motor_id, 0, 0)
+		_state["relaxed_ids"].add(motor_id)
 
 
 def _read_throttled() -> Dict[str, Any]:
@@ -328,6 +366,85 @@ def register_routes(app) -> None:
 		except Exception as e:
 			return jsonify({"ok": False, "error": str(e)}), 500
 
+	@app.route("/api/assembly/relax", methods=["POST"])
+	def assembly_relax():
+		"""Toggle PWM release for all leg joints or the pan/tilt head pair."""
+		payload = request.get_json(silent=True) or {}
+		group = str(payload.get("group", "")).lower()
+		groups = {
+			"legs": list(range(12)),
+			"front_left": [0, 1], "mid_left": [2, 3], "rear_left": [4, 5],
+			"rear_right": [6, 7], "mid_right": [8, 9], "front_right": [10, 11],
+			"head": [12, 13],
+		}
+		ids = groups.get(group)
+		if ids is None:
+			return jsonify({"ok": False, "error": "unknown relax group"}), 400
+
+		# Toggle only when the caller did not explicitly request a state.
+		relaxed = payload.get("relaxed")
+		if relaxed is None:
+			relaxed = not all(i in _state["relaxed_ids"] for i in ids)
+		if bool(relaxed):
+			_relax_ids(ids)
+			return jsonify({"ok": True, "group": group, "relaxed": True, "ids": ids})
+
+		# PWM resumes only when a command is sent.  Re-send the last commanded values.
+		sc = _sc()
+		for motor_id in ids:
+			commanded = int(sc.nowPos[motor_id])
+			sc.setPWM(motor_id, commanded)
+			_activate_motor(motor_id)
+		return jsonify({"ok": True, "group": group, "relaxed": False, "ids": ids})
+
+	@app.route("/api/assembly/motors/<int:motor_id>/position", methods=["POST"])
+	def assembly_motor_position(motor_id: int):
+		"""Move one motor to a calibration PWM without changing its saved center."""
+		sc = _sc()
+		cfg = robot_config.get_config()
+		motor = robot_config.motor_by_id(motor_id, cfg)
+		if motor is None:
+			return jsonify({"ok": False, "error": "unknown motor"}), 404
+		if not motor.get("enabled", True):
+			return jsonify({"ok": False, "error": "motor disabled"}), 400
+		payload = request.get_json(silent=True) or {}
+		try:
+			pwm = int(payload["pwm"])
+		except (KeyError, TypeError, ValueError):
+			return jsonify({"ok": False, "error": "pwm is required"}), 400
+		# Calibration may explore beyond an old per-motor stop, but never beyond the
+		# global conservative PWM safety range.
+		meta = cfg["meta"]
+		pwm = max(int(meta["ctrl_range_min"]), min(int(meta["ctrl_range_max"]), pwm))
+		sc.setPWM(motor_id, pwm)
+		_activate_motor(motor_id)
+		return jsonify({"ok": True, "id": motor_id, "commanded": pwm})
+
+	@app.route("/api/assembly/motors/<int:motor_id>/limit", methods=["POST"])
+	def assembly_motor_limit(motor_id: int):
+		"""Save the motor's current commanded PWM as its min or max software stop."""
+		sc = _sc()
+		cfg = robot_config.get_config()
+		motor = robot_config.motor_by_id(motor_id, cfg)
+		if motor is None:
+			return jsonify({"ok": False, "error": "unknown motor"}), 404
+		payload = request.get_json(silent=True) or {}
+		limit = str(payload.get("limit", "")).lower()
+		value = int(sc.nowPos[motor_id])
+		try:
+			cfg = robot_config.set_motor_limit(motor_id, limit, value, cfg)
+			motor = robot_config.motor_by_id(motor_id, cfg)
+			_set_controller_limits(sc, motor_id, motor, cfg["meta"])
+			limits_updated = _state.get("limits_updated")
+			if callable(limits_updated):
+				limits_updated(cfg)
+			path = robot_config.save_config(cfg)
+		except (TypeError, ValueError) as e:
+			return jsonify({"ok": False, "error": str(e)}), 400
+		except Exception as e:
+			return jsonify({"ok": False, "error": str(e)}), 500
+		return jsonify({"ok": True, "id": motor_id, "limit": limit, "value": value, "path": path})
+
 	@app.route("/api/assembly/motors/<int:motor_id>/center", methods=["POST"])
 	def assembly_motor_center(motor_id: int):
 		sc = _sc()
@@ -355,6 +472,7 @@ def register_routes(app) -> None:
 		move = bool(payload.get("move", True))
 		if move:
 			sc.setPWM(motor_id, center)
+			_activate_motor(motor_id)
 		return jsonify({"ok": True, "id": motor_id, "center": center})
 
 	@app.route("/api/assembly/motors/<int:motor_id>/nudge", methods=["POST"])
@@ -380,6 +498,7 @@ def register_routes(app) -> None:
 		center = robot_config.clamp_pwm(center, motor, cfg["meta"])
 		_dual_write_center(motor_id, center)
 		sc.setPWM(motor_id, center)
+		_activate_motor(motor_id)
 		return jsonify({"ok": True, "id": motor_id, "center": center, "delta": delta})
 
 	@app.route("/api/assembly/home", methods=["POST"])

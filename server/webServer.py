@@ -92,6 +92,9 @@ def _schedule_idle_breath() -> None:
 
 _gait_test_timer: threading.Timer | None = None
 _gait_test_generation: int = 0
+_dance_thread: threading.Thread | None = None
+_dance_cancel = threading.Event()
+_dance_lock = threading.Lock()
 
 
 def _cancel_gait_test() -> None:
@@ -121,6 +124,7 @@ def _start_gait_test(command_input: str) -> bool:
 		return False
 
 	duration_ms = max(150, min(1200, duration_ms))
+	_cancel_dance()
 	_cancel_gait_test()
 	move.commandInput(parts[1])
 	generation = _gait_test_generation
@@ -132,6 +136,87 @@ def _start_gait_test(command_input: str) -> bool:
 	_gait_test_timer.daemon = True
 	_gait_test_timer.start()
 	return True
+
+
+def _cancel_dance() -> None:
+	"""Request a running dance to end; its worker restores the neutral stance."""
+	_dance_cancel.set()
+
+
+def _dance_wait(seconds: float) -> bool:
+	"""Wait interruptibly so Stop and movement controls take effect immediately."""
+	return _dance_cancel.wait(seconds)
+
+
+def _run_leg_tap_dance() -> None:
+	"""Tap counterclockwise around the robot, pause, then return clockwise."""
+	# Logical knee channel and side, viewed from above with the camera/front forward.
+	# FL → ML → RL → RR → MR → FR is counterclockwise.
+	counterclockwise = ((1, True), (3, True), (5, True), (7, False), (9, False), (11, False))
+	clockwise = tuple(reversed(counterclockwise))
+	try:
+		move.rm.pause()
+		move.stand()
+		for knee_channel, is_left in counterclockwise:
+			if _dance_cancel.is_set():
+				return
+			move.set_leg_tap(knee_channel, is_left=is_left, lifted=True)
+			if _dance_wait(0.2):
+				return
+			move.set_leg_tap(knee_channel, is_left=is_left, lifted=False)
+
+		if _dance_wait(2.0):
+			return
+
+		for knee_channel, is_left in clockwise:
+			if _dance_cancel.is_set():
+				return
+			move.set_leg_tap(knee_channel, is_left=is_left, lifted=True)
+			if _dance_wait(0.2):
+				return
+			move.set_leg_tap(knee_channel, is_left=is_left, lifted=False)
+	finally:
+		# Finish and cancellations both leave the robot stationary and centered.
+		move.stand()
+		with _dance_lock:
+			global _dance_thread
+			_dance_thread = None
+
+
+def _start_leg_tap_dance() -> None:
+	global _dance_thread
+	_cancel_gait_test()
+	_cancel_dance()
+	with _dance_lock:
+		if _dance_thread is not None and _dance_thread.is_alive():
+			# The existing worker sees the event.  Do not overlap two servo routines.
+			return
+		_dance_cancel.clear()
+		_dance_thread = threading.Thread(
+			target=_run_leg_tap_dance,
+			name='leg-tap-dance',
+			daemon=True,
+		)
+		_dance_thread.start()
+
+
+def _pause_motion_for_calibration() -> None:
+	"""Stop writers before calibration releases a servo's PWM holding signal."""
+	_cancel_gait_test()
+	_cancel_dance()
+	dance = _dance_thread
+	if dance is not None and dance is not threading.current_thread():
+		dance.join(timeout=0.3)
+	move.rm.pause()
+
+
+def _apply_calibration_limits(cfg) -> None:
+	"""Give the gait loop the newly saved software stops immediately."""
+	move.configure_gait(
+		settings=(cfg.get('motion') or {}).get('gait'),
+		min_positions=scGear.minPos,
+		max_positions=scGear.maxPos,
+	)
 
 # Load YAML centers/limits before first moveInit when possible
 try:
@@ -346,6 +431,12 @@ def _apply_head_joy(command_input: str) -> None:
 
 def robotCtrl(command_input, response):
 	global direction_command, turn_command
+	if command_input == 'danceLegTap':
+		_start_leg_tap_dance()
+		return
+	if command_input == 'danceStop':
+		_cancel_dance()
+		return
 	if command_input.startswith('gaitTest '):
 		_start_gait_test(command_input)
 		return
@@ -355,6 +446,7 @@ def robotCtrl(command_input, response):
 		return
 
 	if command_input in ('forward', 'backward', 'left', 'right', 'DS', 'TS'):
+		_cancel_dance()
 		_cancel_gait_test()
 
 	if 'forward' == command_input:
@@ -568,13 +660,21 @@ if __name__ == '__main__':
 	flask_app = flask_app_module.webapp()
 	# Register assembly routes before Flask accepts traffic
 	assembly_api.register_routes(flask_app_module.app)
-	assembly_api.bind_robot(sc=scGear, lights=None, init_pwm=init_pwm, replace_num=replace_num)
+	assembly_api.bind_robot(
+		sc=scGear, lights=None, init_pwm=init_pwm, replace_num=replace_num,
+		pause_motion=_pause_motion_for_calibration, limits_updated=_apply_calibration_limits,
+		head_controllers=(P_sc, T_sc),
+	)
 	_show_startup_progress(4)
 	flask_app.startthread()
 	_show_startup_progress(5)
 
 	# Re-bind with the early-created light driver once Flask is ready.
-	assembly_api.bind_robot(sc=scGear, lights=RL, init_pwm=init_pwm, replace_num=replace_num)
+	assembly_api.bind_robot(
+		sc=scGear, lights=RL, init_pwm=init_pwm, replace_num=replace_num,
+		pause_motion=_pause_motion_for_calibration, limits_updated=_apply_calibration_limits,
+		head_controllers=(P_sc, T_sc),
+	)
 
 	while  1:
 		try:				  #Start server,waiting for client
