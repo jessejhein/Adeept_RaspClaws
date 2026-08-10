@@ -34,3 +34,7 @@
 .dance-status.bad { color: #b71c1c; }
 .dance-stop { min-height: 1.9rem; margin-top: 0; padding: 0 0.75rem; border-color: #b71c1c; background: #c62828; }
 .pose-heading { border-top: 1px solid rgba(38, 50, 56, 0.12); padding-top: 0.55rem; }
+.pose-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.45rem; }
+.pose-controls button { min-height: 2.2rem; border: 1px solid #607d8b; border-radius: 5px; background: #37474f; color: #fff; cursor: pointer; font: 700 0.68rem/1.15 system-ui, sans-serif; }
+.pose-controls button:hover { background: #455a64; }
+@media (max-width: 420px) { .pose-controls { grid-template-columns: 1fr; } }

@@ -60,7 +60,12 @@
       "<p class=\"dance-description\">Front-left around to front-right, pause, then reverse.</p>" +
       "<div class=\"dance-footer\"><span class=\"dance-status\">Connecting...</span>" +
       "<button type=\"button\" class=\"dance-stop\">Stop</button></div>" +
-      "<h4 class=\"pose-heading\">Poses</h4><p class=\"pose-empty\">Pose controls will appear here.</p>";
+      "<h4 class=\"pose-heading\">Poses</h4>" +
+      "<div class=\"pose-controls\">" +
+      "<button type=\"button\" data-pose=\"poseFront\">Front legs forward</button>" +
+      "<button type=\"button\" data-pose=\"poseRear\">Rear legs back</button>" +
+      "<button type=\"button\" data-pose=\"poseStable\">Stable hexagon</button>" +
+      "</div><p class=\"pose-empty\">Poses center all other joints first.</p>";
     target.appendChild(panel);
 
     status = panel.querySelector(".dance-status");
@@ -71,6 +76,11 @@
     panel.querySelector(".dance-stop").addEventListener("click", function () {
       if (send("danceStop")) setStatus("Stopping dance", false);
     });
+	panel.querySelectorAll("[data-pose]").forEach(function (button) {
+		button.addEventListener("click", function () {
+			if (send(button.getAttribute("data-pose"))) setStatus("Applying " + button.textContent.toLowerCase(), false);
+		});
+	});
     setEnabled(false);
     connect();
     return true;

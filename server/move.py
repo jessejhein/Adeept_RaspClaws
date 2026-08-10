@@ -607,6 +607,25 @@ def set_leg_tap(knee_channel: int, *, is_left: bool, lifted: bool) -> None:
 	_write_gait_pwm(knee_channel, gait.calibrated_pwm(calibration, offset))
 
 
+def set_leg_pose(shoulder_channel: int, *, is_left: bool, forward_offset: float) -> None:
+	"""Set one shoulder for a stationary pose using its calibrated forward direction.
+
+	Positive offsets always mean forward: higher PWM on the left, lower PWM on
+	the right.  The configured per-channel limits and wiring remap still apply.
+	"""
+	center = getattr(RPIservo, 'init_pwm%d' % shoulder_channel, 300)
+	direction = leftSide_direction if is_left else rightSide_direction
+	calibration = _servo_calibration(
+		channel=shoulder_channel,
+		center_pwm=center,
+		direction=direction,
+	)
+	_write_gait_pwm(
+		shoulder_channel,
+		gait.calibrated_pwm(calibration, forward_offset),
+	)
+
+
 '''
 ---Dove---
 making the servo moves smooth.

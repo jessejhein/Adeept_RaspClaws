@@ -200,6 +200,32 @@ def _start_leg_tap_dance() -> None:
 		_dance_thread.start()
 
 
+def _set_pose(pose_name: str) -> bool:
+	"""Center all joints, then apply a conservative stationary shoulder pose."""
+	poses = {
+		'front': ((0, True, 40), (10, False, 40)),
+		'rear': ((4, True, -40), (6, False, -40)),
+		# Middle legs centered, front forward, rear backward: broad six-point base.
+		'stable': (
+			(0, True, 40), (10, False, 40),
+			(2, True, 0), (8, False, 0),
+			(4, True, -40), (6, False, -40),
+		),
+	}
+	legs = poses.get(pose_name)
+	if legs is None:
+		return False
+	_pause_motion_for_calibration()
+	move.stand()
+	for shoulder_channel, is_left, forward_offset in legs:
+		move.set_leg_pose(
+			shoulder_channel,
+			is_left=is_left,
+			forward_offset=forward_offset,
+		)
+	return True
+
+
 def _pause_motion_for_calibration() -> None:
 	"""Stop writers before calibration releases a servo's PWM holding signal."""
 	_cancel_gait_test()
@@ -436,6 +462,15 @@ def robotCtrl(command_input, response):
 		return
 	if command_input == 'danceStop':
 		_cancel_dance()
+		return
+	if command_input == 'poseFront':
+		_set_pose('front')
+		return
+	if command_input == 'poseRear':
+		_set_pose('rear')
+		return
+	if command_input == 'poseStable':
+		_set_pose('stable')
 		return
 	if command_input.startswith('gaitTest '):
 		_start_gait_test(command_input)
