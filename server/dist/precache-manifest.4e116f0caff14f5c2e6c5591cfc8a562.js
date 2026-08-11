@@ -24,7 +24,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/tracking-panel.css"
   },
   {
-    "revision": "head-joystick-css-20260730a",
+    "revision": "head-joystick-css-speed-20260810a",
     "url": "/css/head-joystick.css"
   },
   {
@@ -148,7 +148,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/img/bg.jpg"
   },
   {
-    "revision": "dance-poses-index-20260809a",
+    "revision": "headjoy-speed-index-20260810a",
     "url": "/index.html"
   },
   {
@@ -184,8 +184,8 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/js/tracking-panel.js?v=tracking-20260730"
   },
   {
-    "revision": "head-joystick-js-20260730a",
-    "url": "/js/head-joystick.js?v=headjoy-20260730"
+    "revision": "head-joystick-js-speed-20260810a",
+    "url": "/js/head-joystick.js?v=headjoy-speed-20260810"
   },
   {
     "revision": "682fe012989b3f6c68fa",

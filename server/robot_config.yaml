@@ -9,6 +9,9 @@ meta:
   angle_range_deg: 180
   ctrl_range_min: 100
   ctrl_range_max: 560
+  # Assembly calibration can explore beyond the normal gait range.
+  calibration_range_min: 50
+  calibration_range_max: 650
   channel_swaps:
     - [10, 11]
 leds:
@@ -185,15 +188,15 @@ motors:
   - id: 12
     name: camera_pan
     center: 300
-    min: 100
-    max: 560
+    min: 50
+    max: 570
     invert: false
     enabled: true
   - id: 13
     name: camera_tilt
     center: 300
-    min: 100
-    max: 560
+    min: 230
+    max: 530
     invert: false
     enabled: true
   - id: 14

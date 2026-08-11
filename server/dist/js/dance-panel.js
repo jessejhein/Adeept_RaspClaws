@@ -62,10 +62,10 @@
       "<button type=\"button\" class=\"dance-stop\">Stop</button></div>" +
       "<h4 class=\"pose-heading\">Poses</h4>" +
       "<div class=\"pose-controls\">" +
-      "<button type=\"button\" data-pose=\"poseFront\">Front legs forward</button>" +
-      "<button type=\"button\" data-pose=\"poseRear\">Rear legs back</button>" +
-      "<button type=\"button\" data-pose=\"poseStable\">Stable hexagon</button>" +
-      "</div><p class=\"pose-empty\">Poses center all other joints first.</p>";
+      "<button type=\"button\" data-pose=\"poseForwardBoth\">Forward Both</button>" +
+      "<button type=\"button\" data-pose=\"poseBackwardBoth\">Backward Both</button>" +
+      "<button type=\"button\" data-pose=\"poseHex\">Hex</button>" +
+      "</div><p class=\"pose-empty\">Forward/Backward move only the named outer shoulders. Hex centers the two middle shoulders.</p>";
     target.appendChild(panel);
 
     status = panel.querySelector(".dance-status");

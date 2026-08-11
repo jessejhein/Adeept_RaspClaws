@@ -201,28 +201,22 @@ def _start_leg_tap_dance() -> None:
 
 
 def _set_pose(pose_name: str) -> bool:
-	"""Center all joints, then apply a conservative stationary shoulder pose."""
+	"""Apply an explicit stationary shoulder pose without moving unrelated legs."""
 	poses = {
-		'front': ((0, True, 40), (10, False, 40)),
-		'rear': ((4, True, -40), (6, False, -40)),
-		# Middle legs centered, front forward, rear backward: broad six-point base.
-		'stable': (
-			(0, True, 40), (10, False, 40),
-			(2, True, 0), (8, False, 0),
-			(4, True, -40), (6, False, -40),
-		),
+		'front': ((10, 100), (0, 480)),
+		'rear': ((6, 510), (4, 100)),
+		'stable': ((10, 169), (0, 400), (6, 400), (4, 200)),
 	}
 	legs = poses.get(pose_name)
 	if legs is None:
 		return False
 	_pause_motion_for_calibration()
-	move.stand()
-	for shoulder_channel, is_left, forward_offset in legs:
-		move.set_leg_pose(
-			shoulder_channel,
-			is_left=is_left,
-			forward_offset=forward_offset,
-		)
+	for shoulder_channel, pwm_value in legs:
+		move.set_leg_pwm(shoulder_channel, pwm_value)
+	if pose_name == 'stable':
+		# Hex keeps both middle shoulders at their configured default centers.
+		for shoulder_channel in (2, 8):
+			move.set_leg_pwm(shoulder_channel, int(getattr(RPIservo, 'init_pwm%d' % shoulder_channel, 300)))
 	return True
 
 
@@ -463,13 +457,13 @@ def robotCtrl(command_input, response):
 	if command_input == 'danceStop':
 		_cancel_dance()
 		return
-	if command_input == 'poseFront':
+	if command_input in ('poseFront', 'poseForwardBoth'):
 		_set_pose('front')
 		return
-	if command_input == 'poseRear':
+	if command_input in ('poseRear', 'poseBackwardBoth'):
 		_set_pose('rear')
 		return
-	if command_input == 'poseStable':
+	if command_input in ('poseStable', 'poseHex'):
 		_set_pose('stable')
 		return
 	if command_input.startswith('gaitTest '):

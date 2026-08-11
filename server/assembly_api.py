@@ -412,10 +412,10 @@ def register_routes(app) -> None:
 			pwm = int(payload["pwm"])
 		except (KeyError, TypeError, ValueError):
 			return jsonify({"ok": False, "error": "pwm is required"}), 400
-		# Calibration may explore beyond an old per-motor stop, but never beyond the
-		# global conservative PWM safety range.
-		meta = cfg["meta"]
-		pwm = max(int(meta["ctrl_range_min"]), min(int(meta["ctrl_range_max"]), pwm))
+		# Calibration must be able to discover a new stop beyond the old per-motor
+		# limits and normal gait range, but remains inside the PCA9685 hard envelope.
+		calibration_min, calibration_max = robot_config.calibration_bounds(cfg["meta"])
+		pwm = max(calibration_min, min(calibration_max, pwm))
 		sc.setPWM(motor_id, pwm)
 		_activate_motor(motor_id)
 		return jsonify({"ok": True, "id": motor_id, "commanded": pwm})

@@ -112,3 +112,27 @@
 .head-joystick-center:hover {
   background: #546e7a;
 }
+
+.head-joystick-speed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.55rem;
+  color: #455a64;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.head-joystick-speed output {
+  min-width: 2.2rem;
+  color: #263238;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+#head-joystick-speed-input {
+  display: block;
+  width: 100%;
+  margin-top: 0.2rem;
+  accent-color: #1e88e5;
+}

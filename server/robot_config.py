@@ -16,6 +16,10 @@ except ImportError:  # pragma: no cover
 CONFIG_NAME = "robot_config.yaml"
 _OPEN_MIN = 0
 _OPEN_MAX = 4095
+# Conservative servo pulse envelope; operators can widen this deliberately in
+# robot_config.yaml if a specific actuator requires it.
+DEFAULT_CALIBRATION_MIN = 50
+DEFAULT_CALIBRATION_MAX = 650
 
 _lock = threading.RLock()
 _config: Optional[Dict[str, Any]] = None
@@ -90,6 +94,10 @@ def _normalize(data: Dict[str, Any]) -> Dict[str, Any]:
 	meta.setdefault("angle_range_deg", 180)
 	meta.setdefault("ctrl_range_min", 100)
 	meta.setdefault("ctrl_range_max", 560)
+	# Calibration may need to discover a stop outside the normal gait range.
+	# These are deliberately narrower than the PCA9685's 12-bit off-count range.
+	meta.setdefault("calibration_range_min", DEFAULT_CALIBRATION_MIN)
+	meta.setdefault("calibration_range_max", DEFAULT_CALIBRATION_MAX)
 	# Optional pairs of logical channels to swap (e.g. shoulder/knee plugs reversed)
 	meta.setdefault("channel_swaps", [])
 
@@ -232,6 +240,18 @@ def effective_max(motor: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) 
 	return int(motor["max"])
 
 
+def calibration_bounds(meta: Optional[Dict[str, Any]] = None) -> tuple[int, int]:
+	"""Return the hard PWM envelope used while discovering motor limits."""
+	meta = meta or get_config().get("meta") or {}
+	minimum = int(meta.get("calibration_range_min", DEFAULT_CALIBRATION_MIN))
+	maximum = int(meta.get("calibration_range_max", DEFAULT_CALIBRATION_MAX))
+	minimum = max(DEFAULT_CALIBRATION_MIN, min(DEFAULT_CALIBRATION_MAX, minimum))
+	maximum = max(DEFAULT_CALIBRATION_MIN, min(DEFAULT_CALIBRATION_MAX, maximum))
+	if minimum > maximum:
+		raise ValueError("calibration_range_min cannot exceed calibration_range_max")
+	return minimum, maximum
+
+
 def degree_scale(motor: Dict[str, Any], meta: Dict[str, Any]) -> float:
 	angle_range = float(meta.get("angle_range_deg") or 180) or 180.0
 	lo = motor.get("min")
@@ -328,7 +348,8 @@ def set_motor_limit(
 	if motor is None:
 		raise ValueError("unknown motor")
 	meta = cfg.get("meta") or {}
-	value = max(int(meta.get("ctrl_range_min", 100)), min(int(meta.get("ctrl_range_max", 560)), int(value)))
+	calibration_min, calibration_max = calibration_bounds(meta)
+	value = max(calibration_min, min(calibration_max, int(value)))
 	other = motor.get("max" if limit == "min" else "min")
 	if other is not None:
 		if limit == "min" and value > int(other):

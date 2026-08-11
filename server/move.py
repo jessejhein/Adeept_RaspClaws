@@ -626,6 +626,11 @@ def set_leg_pose(shoulder_channel: int, *, is_left: bool, forward_offset: float)
 	)
 
 
+def set_leg_pwm(shoulder_channel: int, value: int) -> None:
+	"""Write one shoulder's explicit calibration PWM without touching other legs."""
+	_write_gait_pwm(shoulder_channel, int(value))
+
+
 '''
 ---Dove---
 making the servo moves smooth.

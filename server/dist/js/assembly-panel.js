@@ -66,9 +66,13 @@
         "<td class=\"lim\">" + lim + "</td>" +
         "<td class=\"actions\">" +
           "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"-5\">−5</button>" +
+          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"-20\">−20</button>" +
+          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"-10\">−10</button>" +
           "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"-1\">−1</button>" +
           "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"1\">+1</button>" +
-          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"5\">+5</button> " +
+          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"5\">+5</button>" +
+          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"10\">+10</button>" +
+          "<button type=\"button\" class=\"btn-nudge\" data-id=\"" + m.id + "\" data-delta=\"20\">+20</button> " +
           "<button type=\"button\" class=\"btn-test\" data-id=\"" + m.id + "\">Test</button> " +
           "<button type=\"button\" class=\"btn-center\" data-id=\"" + m.id + "\" title=\"Set center to current commanded position\">Set center</button> " +
           "<button type=\"button\" class=\"btn-limit\" data-id=\"" + m.id + "\" data-limit=\"min\" title=\"Save current commanded PWM as the minimum stop\">Set min</button> " +
@@ -328,7 +332,7 @@
           "</tr></thead>" +
         "<tbody id=\"assembly-motor-body\"></tbody>" +
         "</table>" +
-		"<p class=\"assembly-motor-hint\">Relax turns PWM holding power off so joints can be moved by hand. “Commanded” is the last software PWM, not a physical readback. Move ± changes only the command; Set min/max saves that command immediately.</p>" +
+        "<p class=\"assembly-motor-hint\">Relax turns PWM holding power off so joints can be moved by hand. “Commanded” is the last software PWM, not a physical readback. Calibration moves may go beyond the saved min/max, within the configurable 50–650 servo safety envelope. Set min/max saves that command immediately.</p>" +
         "<h4>LEDs</h4>" +
         "<div id=\"assembly-pattern-bar\" class=\"assembly-pattern-bar\"></div>" +
         "<p class=\"assembly-led-hint\">Brightness 0–255 (decimal). Interior LEDs are not line-of-sight — " +

@@ -2,7 +2,7 @@
  * Virtual camera joystick: drag the knob in a circle for proportional pan/tilt.
  * Replaces the stock Up/Down/Left/Right head pad in Arm / Camera Control.
  *
- * WebSocket: headJoy <nx> <ny>  (each -1..1), headJoyStop on release.
+ * WebSocket: headJoy <nx> <ny>, headJoyStop on release.
  * nx>0 look right, ny>0 look up. Distance from center controls speed.
  */
 (function () {
@@ -19,6 +19,11 @@
   var lastSend = 0;
   var lastNx = 0;
   var lastNy = 0;
+	var topSpeed = 14;
+	var lastInputNx = 0;
+	var lastInputNy = 0;
+	var topSpeedInput;
+	var topSpeedValue;
   var SEND_MS = 40;
   var DEADZONE = 0.08;
 
@@ -61,21 +66,27 @@
     if (!force && now - lastSend < SEND_MS) {
       return;
     }
-    // Quantize a bit to cut chatter.
-    var qx = Math.round(nx * 100) / 100;
-    var qy = Math.round(ny * 100) / 100;
-    if (!force && qx === lastNx && qy === lastNy) {
+    lastInputNx = nx;
+    lastInputNy = ny;
+    // Quadratic easing is intentionally gentle near center; scaling keeps the
+    // old server protocol while lowering the reachable top speed.
+    var scale = topSpeed / 28;
+    var qx = Math.round(Math.sign(nx) * nx * nx * scale * 100) / 100;
+    var qy = Math.round(Math.sign(ny) * ny * ny * scale * 100) / 100;
+	if (!force && qx === lastNx && qy === lastNy) {
       return;
     }
     lastNx = qx;
     lastNy = qy;
     lastSend = now;
-    send("headJoy " + qx + " " + qy);
+		send("headJoy " + qx + " " + qy);
   }
 
   function stopJoy() {
     lastNx = 0;
     lastNy = 0;
+	lastInputNx = 0;
+	lastInputNy = 0;
     send("headJoyStop");
     setKnob(0, 0);
   }
@@ -220,13 +231,18 @@
       "<div class=\"head-joystick-footer\">" +
       "<span class=\"head-joystick-status\">Connecting…</span>" +
       "<button type=\"button\" class=\"head-joystick-center\">Center stop</button>" +
-      "</div>";
+		"</div>" +
+		"<label class=\"head-joystick-speed\" for=\"head-joystick-speed-input\">" +
+		"Top speed <output id=\"head-joystick-speed-value\">14</output></label>" +
+		"<input id=\"head-joystick-speed-input\" type=\"range\" min=\"6\" max=\"20\" step=\"1\" value=\"14\">";
 
     mount.appendChild(panel);
 
     pad = panel.querySelector(".head-joystick-pad");
     knob = panel.querySelector(".head-joystick-knob");
     statusEl = panel.querySelector(".head-joystick-status");
+		topSpeedInput = panel.querySelector("#head-joystick-speed-input");
+		topSpeedValue = panel.querySelector("#head-joystick-speed-value");
 
     pad.addEventListener("pointerdown", onPointerDown);
     pad.addEventListener("pointermove", onPointerMove);
@@ -238,6 +254,12 @@
       stopJoy();
       setStatus("Stopped");
     });
+
+		topSpeedInput.addEventListener("input", function () {
+			topSpeed = Number(topSpeedInput.value);
+			topSpeedValue.textContent = String(topSpeed);
+			if (dragging) sendJoy(lastInputNx, lastInputNy, true);
+		});
 
     // Re-hide stock buttons if Vue re-renders them.
     var observer = new MutationObserver(function () {
