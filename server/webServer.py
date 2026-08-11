@@ -8,6 +8,7 @@
 import time
 import threading
 import logging
+import math
 import move
 import os
 import info
@@ -202,6 +203,38 @@ def _start_leg_tap_dance() -> None:
 		_dance_thread.start()
 
 
+def _start_lean_sway_dance() -> None:
+	"""Continuously sway side-to-side with a smooth, slow sine-wave lean."""
+	global _dance_thread
+	_cancel_gait_test()
+	_cancel_dance()
+	previous = _dance_thread
+	if previous is not None and previous.is_alive():
+		previous.join(timeout=0.4)
+	if previous is not None and previous.is_alive():
+		return
+
+	def worker() -> None:
+		try:
+			move.rm.pause()
+			started = time.monotonic()
+			while not _dance_cancel.is_set():
+				# ±60 PWM, 6 seconds per full left → right → left cycle.
+				offset = int(round(60 * math.sin((2 * math.pi * (time.monotonic() - started)) / 6.0)))
+				_apply_lean_offset(offset, pause_motion=False)
+				_dance_cancel.wait(0.05)
+		finally:
+			_apply_lean_offset(0, pause_motion=False)
+			with _dance_lock:
+				global _dance_thread
+				_dance_thread = None
+
+	with _dance_lock:
+		_dance_cancel.clear()
+		_dance_thread = threading.Thread(target=worker, name='lean-sway-dance', daemon=True)
+		_dance_thread.start()
+
+
 def _set_pose(pose_name: str) -> bool:
 	"""Apply an explicit stationary shoulder pose without moving unrelated legs."""
 	poses = {
@@ -222,17 +255,12 @@ def _set_pose(pose_name: str) -> bool:
 	return True
 
 
-def _set_lean(direction: int) -> int:
-	"""Progressively shorten one side's legs; zero restores both sides."""
+def _apply_lean_offset(offset: int, *, pause_motion: bool) -> int:
+	"""Apply one signed lean offset; the physical PWM write remains calibrated."""
 	global _lean_offset
-	if direction > 0:
-		_lean_offset += 20
-	elif direction < 0:
-		_lean_offset -= 20
-	else:
-		_lean_offset = 0
-
-	_pause_motion_for_calibration()
+	_lean_offset = max(-100, min(100, int(offset)))
+	if pause_motion:
+		_pause_motion_for_calibration()
 	for knee_channel, is_left in _POSE_KNEES:
 		move.set_leg_height(knee_channel, is_left=is_left, height_offset=0)
 	if _lean_offset > 0:
@@ -244,6 +272,15 @@ def _set_lean(direction: int) -> int:
 	for knee_channel, is_left in active_knees:
 		move.set_leg_height(knee_channel, is_left=is_left, height_offset=abs(_lean_offset))
 	return _lean_offset
+
+
+def _set_lean(direction: int) -> int:
+	"""Progressively shorten one side's legs; zero restores both sides."""
+	if direction > 0:
+		return _apply_lean_offset(_lean_offset + 20, pause_motion=True)
+	if direction < 0:
+		return _apply_lean_offset(_lean_offset - 20, pause_motion=True)
+	return _apply_lean_offset(0, pause_motion=True)
 
 
 def _set_crouch() -> None:
@@ -491,6 +528,9 @@ def robotCtrl(command_input, response):
 		return
 	if command_input == 'danceStop':
 		_cancel_dance()
+		return
+	if command_input == 'danceLeanSway':
+		_start_lean_sway_dance()
 		return
 	if command_input in ('poseFront', 'poseForwardBoth'):
 		_set_pose('front')

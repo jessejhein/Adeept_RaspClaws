@@ -5,6 +5,7 @@
   var reconnectTimer;
   var status;
   var danceButton;
+  var swayButton;
   var leanTicks = 0;
   var leanReadout;
 
@@ -16,6 +17,7 @@
 
   function setEnabled(enabled) {
     if (danceButton) danceButton.disabled = !enabled;
+    if (swayButton) swayButton.disabled = !enabled;
   }
 
   function connect() {
@@ -66,6 +68,8 @@
       "<h4>Dance</h4>" +
       "<button type=\"button\" class=\"dance-button\">Leg tap round</button>" +
       "<p class=\"dance-description\">Front-left around to front-right, pause, then reverse.</p>" +
+      "<button type=\"button\" class=\"dance-button dance-sway\">Slow lean sway (±60)</button>" +
+      "<p class=\"dance-description\">Smooth six-second side-to-side sine wave.</p>" +
       "<div class=\"dance-footer\"><span class=\"dance-status\">Connecting...</span>" +
       "<button type=\"button\" class=\"dance-stop\">Stop</button></div>" +
       "<h4 class=\"pose-heading\">Poses</h4>" +
@@ -78,14 +82,18 @@
       "<button type=\"button\" data-pose=\"poseLeanRight\">Lean right +</button>" +
       "<button type=\"button\" data-pose=\"poseCrouch\">Crouch</button>" +
       "</div><p class=\"pose-lean-readout\">Lean: centered</p>" +
-      "<p class=\"pose-empty\">Each lean press adds 20 PWM. Crouch bends all six knees equally.</p>";
+      "<p class=\"pose-empty\">Each lean press adds 20 PWM, up to 100 PWM each side. Crouch bends all six knees equally.</p>";
     target.appendChild(panel);
 
     status = panel.querySelector(".dance-status");
     leanReadout = panel.querySelector(".pose-lean-readout");
     danceButton = panel.querySelector(".dance-button");
+    swayButton = panel.querySelector(".dance-sway");
     danceButton.addEventListener("click", function () {
       if (send("danceLegTap")) setStatus("Running leg tap round", false);
+    });
+    swayButton.addEventListener("click", function () {
+      if (send("danceLeanSway")) setStatus("Running slow lean sway", false);
     });
     panel.querySelector(".dance-stop").addEventListener("click", function () {
       if (send("danceStop")) setStatus("Stopping dance", false);
@@ -94,8 +102,8 @@
       button.addEventListener("click", function () {
         var pose = button.getAttribute("data-pose");
         if (!send(pose)) return;
-        if (pose === "poseLeanLeft") leanTicks += 20;
-        else if (pose === "poseLeanRight") leanTicks -= 20;
+        if (pose === "poseLeanLeft") leanTicks = Math.min(100, leanTicks + 20);
+        else if (pose === "poseLeanRight") leanTicks = Math.max(-100, leanTicks - 20);
         else if (pose === "poseLeanCenter" || pose === "poseCrouch") leanTicks = 0;
         updateLeanReadout();
         setStatus("Applying " + button.textContent.toLowerCase(), false);

@@ -16,7 +16,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/gait-test.css"
   },
   {
-    "revision": "dance-panel-css-progressive-lean-20260810a",
+    "revision": "dance-panel-css-lean-sway-20260810a",
     "url": "/css/dance-panel.css"
   },
   {
@@ -148,7 +148,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/img/bg.jpg"
   },
   {
-    "revision": "progressive-lean-index-20260810a",
+    "revision": "lean-sway-index-20260810a",
     "url": "/index.html"
   },
   {
@@ -176,8 +176,8 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/js/gait-test-panel.js"
   },
   {
-    "revision": "dance-panel-js-progressive-lean-20260810a",
-    "url": "/js/dance-panel.js?v=progressive-lean-20260810"
+    "revision": "dance-panel-js-lean-sway-20260810a",
+    "url": "/js/dance-panel.js?v=lean-sway-20260810"
   },
   {
     "revision": "tracking-panel-js-20260730a",
