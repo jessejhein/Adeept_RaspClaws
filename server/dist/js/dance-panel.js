@@ -5,6 +5,8 @@
   var reconnectTimer;
   var status;
   var danceButton;
+  var leanTicks = 0;
+  var leanReadout;
 
   function setStatus(text, bad) {
     if (!status) return;
@@ -43,6 +45,12 @@
     return true;
   }
 
+  function updateLeanReadout() {
+    if (!leanReadout) return;
+    if (leanTicks === 0) leanReadout.textContent = "Lean: centered";
+    else leanReadout.textContent = "Lean: " + (leanTicks > 0 ? "left " : "right ") + Math.abs(leanTicks) + " PWM";
+  }
+
   function buildPanel() {
     if (document.getElementById("dance-panel")) return true;
     var titles = Array.prototype.slice.call(document.querySelectorAll(".mod-title"));
@@ -65,12 +73,16 @@
       "<button type=\"button\" data-pose=\"poseForwardBoth\">Forward Both</button>" +
       "<button type=\"button\" data-pose=\"poseBackwardBoth\">Backward Both</button>" +
       "<button type=\"button\" data-pose=\"poseHex\">Hex</button>" +
-      "<button type=\"button\" data-pose=\"poseLeanLeft\">Lean left</button>" +
-      "<button type=\"button\" data-pose=\"poseLeanRight\">Lean right</button>" +
-      "</div><p class=\"pose-empty\">Lean poses use a small knee-height offset on the selected side.</p>";
+      "<button type=\"button\" data-pose=\"poseLeanLeft\">Lean left +</button>" +
+      "<button type=\"button\" data-pose=\"poseLeanCenter\">Lean center</button>" +
+      "<button type=\"button\" data-pose=\"poseLeanRight\">Lean right +</button>" +
+      "<button type=\"button\" data-pose=\"poseCrouch\">Crouch</button>" +
+      "</div><p class=\"pose-lean-readout\">Lean: centered</p>" +
+      "<p class=\"pose-empty\">Each lean press adds 20 PWM. Crouch bends all six knees equally.</p>";
     target.appendChild(panel);
 
     status = panel.querySelector(".dance-status");
+    leanReadout = panel.querySelector(".pose-lean-readout");
     danceButton = panel.querySelector(".dance-button");
     danceButton.addEventListener("click", function () {
       if (send("danceLegTap")) setStatus("Running leg tap round", false);
@@ -78,11 +90,17 @@
     panel.querySelector(".dance-stop").addEventListener("click", function () {
       if (send("danceStop")) setStatus("Stopping dance", false);
     });
-	panel.querySelectorAll("[data-pose]").forEach(function (button) {
-		button.addEventListener("click", function () {
-			if (send(button.getAttribute("data-pose"))) setStatus("Applying " + button.textContent.toLowerCase(), false);
-		});
-	});
+    panel.querySelectorAll("[data-pose]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var pose = button.getAttribute("data-pose");
+        if (!send(pose)) return;
+        if (pose === "poseLeanLeft") leanTicks += 20;
+        else if (pose === "poseLeanRight") leanTicks -= 20;
+        else if (pose === "poseLeanCenter" || pose === "poseCrouch") leanTicks = 0;
+        updateLeanReadout();
+        setStatus("Applying " + button.textContent.toLowerCase(), false);
+      });
+    });
     setEnabled(false);
     connect();
     return true;

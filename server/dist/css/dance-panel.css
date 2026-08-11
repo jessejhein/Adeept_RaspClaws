@@ -37,4 +37,5 @@
 .pose-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.35rem; margin-top: 0.45rem; }
 .pose-controls button { min-height: 2.2rem; border: 1px solid #607d8b; border-radius: 5px; background: #37474f; color: #fff; cursor: pointer; font: 700 0.68rem/1.15 system-ui, sans-serif; }
 .pose-controls button:hover { background: #455a64; }
+.pose-lean-readout { margin: 0.45rem 0 0; color: #263238; font-size: 0.72rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 @media (max-width: 420px) { .pose-controls { grid-template-columns: 1fr; } }

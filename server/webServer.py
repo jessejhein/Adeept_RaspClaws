@@ -95,6 +95,8 @@ _gait_test_generation: int = 0
 _dance_thread: threading.Thread | None = None
 _dance_cancel = threading.Event()
 _dance_lock = threading.Lock()
+_lean_offset: int = 0
+_POSE_KNEES = ((1, True), (3, True), (5, True), (7, False), (9, False), (11, False))
 
 
 def _cancel_gait_test() -> None:
@@ -207,16 +209,6 @@ def _set_pose(pose_name: str) -> bool:
 		'rear': ((6, 510), (4, 100)),
 		'stable': ((10, 169), (0, 400), (6, 400), (4, 200)),
 	}
-	if pose_name in ('lean_left', 'lean_right'):
-		_pause_motion_for_calibration()
-		# Positive knee offset is the existing gait's "lift" direction.  A small
-		# offset shortens that side's legs and lets the body settle into the lean.
-		for knee_channel, is_left in ((1, True), (3, True), (5, True), (7, False), (9, False), (11, False)):
-			move.set_leg_height(knee_channel, is_left=is_left, height_offset=0)
-		active_knees = ((1, True), (3, True), (5, True)) if pose_name == 'lean_left' else ((7, False), (9, False), (11, False))
-		for knee_channel, is_left in active_knees:
-			move.set_leg_height(knee_channel, is_left=is_left, height_offset=20)
-		return True
 	legs = poses.get(pose_name)
 	if legs is None:
 		return False
@@ -228,6 +220,39 @@ def _set_pose(pose_name: str) -> bool:
 		for shoulder_channel in (2, 8):
 			move.set_leg_pwm(shoulder_channel, int(getattr(RPIservo, 'init_pwm%d' % shoulder_channel, 300)))
 	return True
+
+
+def _set_lean(direction: int) -> int:
+	"""Progressively shorten one side's legs; zero restores both sides."""
+	global _lean_offset
+	if direction > 0:
+		_lean_offset += 20
+	elif direction < 0:
+		_lean_offset -= 20
+	else:
+		_lean_offset = 0
+
+	_pause_motion_for_calibration()
+	for knee_channel, is_left in _POSE_KNEES:
+		move.set_leg_height(knee_channel, is_left=is_left, height_offset=0)
+	if _lean_offset > 0:
+		active_knees = _POSE_KNEES[:3]  # left side
+	elif _lean_offset < 0:
+		active_knees = _POSE_KNEES[3:]  # right side
+	else:
+		active_knees = ()
+	for knee_channel, is_left in active_knees:
+		move.set_leg_height(knee_channel, is_left=is_left, height_offset=abs(_lean_offset))
+	return _lean_offset
+
+
+def _set_crouch() -> None:
+	"""Bend all six knees equally for a low, symmetric crouch pose."""
+	global _lean_offset
+	_lean_offset = 0
+	_pause_motion_for_calibration()
+	for knee_channel, is_left in _POSE_KNEES:
+		move.set_leg_height(knee_channel, is_left=is_left, height_offset=35)
 
 
 def _pause_motion_for_calibration() -> None:
@@ -477,10 +502,16 @@ def robotCtrl(command_input, response):
 		_set_pose('stable')
 		return
 	if command_input == 'poseLeanLeft':
-		_set_pose('lean_left')
+		_set_lean(1)
 		return
 	if command_input == 'poseLeanRight':
-		_set_pose('lean_right')
+		_set_lean(-1)
+		return
+	if command_input == 'poseLeanCenter':
+		_set_lean(0)
+		return
+	if command_input == 'poseCrouch':
+		_set_crouch()
 		return
 	if command_input.startswith('gaitTest '):
 		_start_gait_test(command_input)
