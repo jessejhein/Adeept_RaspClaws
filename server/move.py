@@ -607,6 +607,18 @@ def set_leg_tap(knee_channel: int, *, is_left: bool, lifted: bool) -> None:
 	_write_gait_pwm(knee_channel, gait.calibrated_pwm(calibration, offset))
 
 
+def set_leg_height(knee_channel: int, *, is_left: bool, height_offset: float) -> None:
+	"""Set a calibrated knee height offset for a stationary pose."""
+	center = getattr(RPIservo, 'init_pwm%d' % knee_channel, 300)
+	height_direction = leftSide_height if is_left else rightSide_height
+	calibration = _servo_calibration(
+		channel=knee_channel,
+		center_pwm=center,
+		direction=height_direction,
+	)
+	_write_gait_pwm(knee_channel, gait.calibrated_pwm(calibration, height_offset))
+
+
 def set_leg_pose(shoulder_channel: int, *, is_left: bool, forward_offset: float) -> None:
 	"""Set one shoulder for a stationary pose using its calibrated forward direction.
 

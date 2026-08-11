@@ -207,6 +207,16 @@ def _set_pose(pose_name: str) -> bool:
 		'rear': ((6, 510), (4, 100)),
 		'stable': ((10, 169), (0, 400), (6, 400), (4, 200)),
 	}
+	if pose_name in ('lean_left', 'lean_right'):
+		_pause_motion_for_calibration()
+		# Positive knee offset is the existing gait's "lift" direction.  A small
+		# offset shortens that side's legs and lets the body settle into the lean.
+		for knee_channel, is_left in ((1, True), (3, True), (5, True), (7, False), (9, False), (11, False)):
+			move.set_leg_height(knee_channel, is_left=is_left, height_offset=0)
+		active_knees = ((1, True), (3, True), (5, True)) if pose_name == 'lean_left' else ((7, False), (9, False), (11, False))
+		for knee_channel, is_left in active_knees:
+			move.set_leg_height(knee_channel, is_left=is_left, height_offset=20)
+		return True
 	legs = poses.get(pose_name)
 	if legs is None:
 		return False
@@ -465,6 +475,12 @@ def robotCtrl(command_input, response):
 		return
 	if command_input in ('poseStable', 'poseHex'):
 		_set_pose('stable')
+		return
+	if command_input == 'poseLeanLeft':
+		_set_pose('lean_left')
+		return
+	if command_input == 'poseLeanRight':
+		_set_pose('lean_right')
 		return
 	if command_input.startswith('gaitTest '):
 		_start_gait_test(command_input)

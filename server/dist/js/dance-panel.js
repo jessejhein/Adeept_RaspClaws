@@ -65,7 +65,9 @@
       "<button type=\"button\" data-pose=\"poseForwardBoth\">Forward Both</button>" +
       "<button type=\"button\" data-pose=\"poseBackwardBoth\">Backward Both</button>" +
       "<button type=\"button\" data-pose=\"poseHex\">Hex</button>" +
-      "</div><p class=\"pose-empty\">Forward/Backward move only the named outer shoulders. Hex centers the two middle shoulders.</p>";
+      "<button type=\"button\" data-pose=\"poseLeanLeft\">Lean left</button>" +
+      "<button type=\"button\" data-pose=\"poseLeanRight\">Lean right</button>" +
+      "</div><p class=\"pose-empty\">Lean poses use a small knee-height offset on the selected side.</p>";
     target.appendChild(panel);
 
     status = panel.querySelector(".dance-status");

@@ -16,7 +16,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/css/gait-test.css"
   },
   {
-    "revision": "dance-panel-css-poses-20260809a",
+    "revision": "dance-panel-css-lean-20260810a",
     "url": "/css/dance-panel.css"
   },
   {
@@ -148,7 +148,7 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/img/bg.jpg"
   },
   {
-    "revision": "headjoy-speed-index-20260810a",
+    "revision": "lean-poses-index-20260810a",
     "url": "/index.html"
   },
   {
@@ -176,8 +176,8 @@ self.__precacheManifest = (self.__precacheManifest || []).concat([
     "url": "/js/gait-test-panel.js"
   },
   {
-    "revision": "dance-panel-js-poses-20260809a",
-    "url": "/js/dance-panel.js?v=poses-20260809"
+    "revision": "dance-panel-js-lean-20260810a",
+    "url": "/js/dance-panel.js?v=lean-poses-20260810"
   },
   {
     "revision": "tracking-panel-js-20260730a",
